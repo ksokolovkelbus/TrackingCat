@@ -30,13 +30,12 @@ from app.zones import SceneZoneClassifier
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Detect and track cats in a video stream.")
     parser.add_argument("--config", default="configs/default.yaml", help="Path to YAML config.")
-    parser.add_argument("--source", choices=["webcam", "file", "rtsp", "http_snapshot", "browser_upload"], help="Input source type.")
+    parser.add_argument("--source", choices=["webcam", "file", "rtsp", "http_snapshot"], help="Input source type.")
     parser.add_argument("--input", help="Video file path or RTSP/URL stream.")
     parser.add_argument("--camera-index", type=int, help="Camera index for webcam source.")
     parser.add_argument("--camera-width", type=int, help="Requested camera capture width.")
     parser.add_argument("--camera-height", type=int, help="Requested camera capture height.")
     parser.add_argument("--snapshot-timeout", type=float, help="HTTP timeout for snapshot-based sources.")
-    parser.add_argument("--browser-port", type=int, help="Port for browser camera ingest page.")
     parser.add_argument(
         "--process-every-n-frames",
         type=int,
@@ -191,7 +190,6 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
         "source.camera_width": args.camera_width,
         "source.camera_height": args.camera_height,
         "source.snapshot_timeout_seconds": args.snapshot_timeout,
-        "source.browser_camera_port": args.browser_port,
         "source.process_every_n_frames": args.process_every_n_frames,
         "detector.model_path": args.model,
         "detector.imgsz": args.imgsz,

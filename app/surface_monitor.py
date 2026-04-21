@@ -11,6 +11,7 @@ from app.models import (
     SurfaceEvent,
     Track,
     TrackLocationState,
+    TrackState,
     ZoneType,
 )
 from app.zones import SceneZoneClassifier
@@ -350,6 +351,8 @@ class SurfaceMonitor:
 
     @staticmethod
     def _is_alert_eligible_track(track: Track, frame_index: int) -> bool:
-        if track.state.name != 'CONFIRMED':
+        if track.state != TrackState.CONFIRMED:
             return False
+        if track.last_detection_frame <= 0:
+            return True
         return (frame_index - track.last_detection_frame) <= 1

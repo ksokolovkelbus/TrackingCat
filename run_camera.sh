@@ -16,14 +16,11 @@ case "$MODE" in
   esp32|wifi|esp32_wifi)
     CONFIG="configs/esp32_wifi.yaml"
     ;;
-  browser|browser-camera|phone-browser)
-    CONFIG="configs/browser_camera.yaml"
-    ;;
   iphone-ipcam|iphone|ipcam)
     CONFIG="configs/iphone_ipcamera.yaml"
     ;;
   *)
-    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|esp32|browser|iphone] [extra app args...]" >&2
+    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|esp32|iphone] [extra app args...]" >&2
     exit 2
     ;;
 esac

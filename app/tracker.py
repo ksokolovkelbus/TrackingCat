@@ -781,18 +781,19 @@ class MultiCatTracker:
         return max(1, track.consecutive_misses - self._lost_transition_threshold() + 1)
 
     def _assign_display_numbers(self, frame_index: int) -> list[Track]:
-        for track in self._tracks.values():
-            if not track.is_displayed(frame_index):
-                track.display_number = None
-
+        del frame_index
         visible_tracks = sort_tracks_for_display(
             [
                 track
                 for track in self._iter_non_removed_tracks()
-                if track.is_displayed(frame_index)
+                if track.state in {TrackState.CONFIRMED, TrackState.HELD}
             ],
             mode=self._config.display_sort_mode,
         )
+        visible_ids = {track.track_id for track in visible_tracks}
+        for track in self._tracks.values():
+            if track.track_id not in visible_ids:
+                track.display_number = None
         for display_number, track in enumerate(visible_tracks, start=1):
             track.display_number = display_number
         return visible_tracks

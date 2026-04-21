@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Literal, TypeAlias
 
 
-SourceType: TypeAlias = Literal["webcam", "file", "rtsp", "http_snapshot", "browser_upload"]
+SourceType: TypeAlias = Literal["webcam", "file", "rtsp", "http_snapshot"]
 TargetSelectionStrategy: TypeAlias = Literal[
     "largest_area",
     "highest_confidence",
@@ -396,14 +396,6 @@ class SourceConfig:
     buffer_size: int = 1
     snapshot_timeout_seconds: float = 2.0
     snapshot_use_cache_bust: bool = True
-    browser_camera_host: str = "0.0.0.0"
-    browser_public_host: str = "192.168.8.176"
-    browser_camera_port: int = 8020
-    browser_frame_timeout_seconds: float = 10.0
-    browser_capture_width: int = 640
-    browser_capture_height: int = 360
-    browser_capture_interval_ms: int = 250
-    browser_jpeg_quality: int = 75
 
     def resolved_source(self) -> int | str:
         if self.source_type == "webcam":
@@ -412,8 +404,6 @@ class SourceConfig:
             if not self.source_path:
                 raise ValueError("source_path is required when source_type='file'.")
             return self.source_path
-        if self.source_type == "browser_upload":
-            return f"http://{self.browser_public_host}:{self.browser_camera_port}/"
         if not self.stream_url:
             raise ValueError(f"stream_url is required when source_type='{self.source_type}'.")
         return self.stream_url

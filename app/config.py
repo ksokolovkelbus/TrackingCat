@@ -224,30 +224,6 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             snapshot_use_cache_bust=bool(
                 source_data.get("snapshot_use_cache_bust", defaults.source.snapshot_use_cache_bust),
             ),
-            browser_camera_host=str(
-                source_data.get("browser_camera_host", defaults.source.browser_camera_host),
-            ),
-            browser_public_host=str(
-                source_data.get("browser_public_host", defaults.source.browser_public_host),
-            ),
-            browser_camera_port=int(
-                source_data.get("browser_camera_port", defaults.source.browser_camera_port),
-            ),
-            browser_frame_timeout_seconds=float(
-                source_data.get("browser_frame_timeout_seconds", defaults.source.browser_frame_timeout_seconds),
-            ),
-            browser_capture_width=int(
-                source_data.get("browser_capture_width", defaults.source.browser_capture_width),
-            ),
-            browser_capture_height=int(
-                source_data.get("browser_capture_height", defaults.source.browser_capture_height),
-            ),
-            browser_capture_interval_ms=int(
-                source_data.get("browser_capture_interval_ms", defaults.source.browser_capture_interval_ms),
-            ),
-            browser_jpeg_quality=int(
-                source_data.get("browser_jpeg_quality", defaults.source.browser_jpeg_quality),
-            ),
         ),
         detector=DetectorConfig(
             model_path=str(detector_data.get("model_path", defaults.detector.model_path)),
@@ -728,7 +704,7 @@ def _round_float(value: float) -> float:
 
 
 def _validate_config(config: AppConfig) -> None:
-    allowed_sources = {"webcam", "file", "rtsp", "http_snapshot", "browser_upload"}
+    allowed_sources = {"webcam", "file", "rtsp", "http_snapshot"}
     if config.source.source_type not in allowed_sources:
         raise ConfigError(
             f"Unsupported source_type '{config.source.source_type}'. Expected one of {sorted(allowed_sources)}."
@@ -742,17 +718,6 @@ def _validate_config(config: AppConfig) -> None:
         raise ConfigError("source.source_path is required for file input.")
     if config.source.source_type in {"rtsp", "http_snapshot"} and not config.source.stream_url:
         raise ConfigError(f"source.stream_url is required for {config.source.source_type} input.")
-    if config.source.source_type == "browser_upload":
-        if config.source.browser_camera_port <= 0 or config.source.browser_camera_port > 65535:
-            raise ConfigError("source.browser_camera_port must be between 1 and 65535.")
-        if config.source.browser_frame_timeout_seconds <= 0:
-            raise ConfigError("source.browser_frame_timeout_seconds must be > 0.")
-        if config.source.browser_capture_width <= 0 or config.source.browser_capture_height <= 0:
-            raise ConfigError("source.browser_capture_width/source.browser_capture_height must be positive.")
-        if config.source.browser_capture_interval_ms < 50:
-            raise ConfigError("source.browser_capture_interval_ms must be >= 50.")
-        if not 1 <= config.source.browser_jpeg_quality <= 100:
-            raise ConfigError("source.browser_jpeg_quality must be between 1 and 100.")
 
     if not 0.0 <= config.detector.confidence_threshold <= 1.0:
         raise ConfigError("detector.confidence_threshold must be between 0 and 1.")

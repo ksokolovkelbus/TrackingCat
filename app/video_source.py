@@ -9,7 +9,6 @@ from urllib import request as urllib_request
 import cv2
 import numpy as np
 
-from app.browser_camera import BrowserCameraIngestServer
 from app.models import SourceConfig
 
 
@@ -26,8 +25,6 @@ class VideoSource:
         self._snapshot_opened = False
         self._pending_frame: np.ndarray | None = None
         self._snapshot_counter = 0
-        self._browser_server: BrowserCameraIngestServer | None = None
-        self._browser_last_frame_id = 0
         self.status = "disconnected"
 
     def open(self) -> None:
@@ -44,20 +41,6 @@ class VideoSource:
             self._log_snapshot_configuration(frame)
             return
 
-        if self._config.source_type == "browser_upload":
-            self._browser_server = BrowserCameraIngestServer(config=self._config, logger=self._logger)
-            try:
-                self._browser_server.start()
-            except OSError as exc:
-                raise VideoSourceError(
-                    f"Failed to start browser camera ingest server on {self._config.browser_camera_host}:{self._config.browser_camera_port}: {exc}"
-                ) from exc
-            self._snapshot_opened = True
-            self._browser_last_frame_id = 0
-            self.status = "waiting_for_browser"
-            self._consecutive_failures = 0
-            self._logger.info("Open %s from the device browser and press Start camera.", self._browser_server.public_url)
-            return
 
         self._capture = self._create_capture()
         if not self._capture.isOpened():
@@ -73,8 +56,6 @@ class VideoSource:
     def read(self) -> tuple[bool, np.ndarray | None]:
         if self._config.source_type == "http_snapshot":
             return self._read_http_snapshot()
-        if self._config.source_type == "browser_upload":
-            return self._read_browser_upload()
 
         if not self.is_opened():
             if self._config.source_type == "file":
@@ -116,7 +97,7 @@ class VideoSource:
         return False, None
 
     def is_opened(self) -> bool:
-        if self._config.source_type in {"http_snapshot", "browser_upload"}:
+        if self._config.source_type == "http_snapshot":
             return self._snapshot_opened
         return self._capture is not None and self._capture.isOpened()
 
@@ -124,12 +105,8 @@ class VideoSource:
         if self._capture is not None:
             self._capture.release()
             self._capture = None
-        if self._browser_server is not None:
-            self._browser_server.stop()
-            self._browser_server = None
         self._snapshot_opened = False
         self._pending_frame = None
-        self._browser_last_frame_id = 0
         self.status = "released"
 
     def _create_capture(self) -> cv2.VideoCapture:
@@ -169,8 +146,6 @@ class VideoSource:
             return str(self._config.camera_index)
         if self._config.source_type == "file":
             return self._config.source_path or "<missing file path>"
-        if self._config.source_type == "browser_upload":
-            return f"http://{self._config.browser_public_host}:{self._config.browser_camera_port}/"
         return self._config.stream_url or "<missing stream url>"
 
     def _log_capture_configuration(self) -> None:
@@ -198,32 +173,6 @@ class VideoSource:
             self._config.process_every_n_frames,
             self._config.snapshot_timeout_seconds,
         )
-
-    def _read_browser_upload(self) -> tuple[bool, np.ndarray | None]:
-        if not self.is_opened() or self._browser_server is None:
-            recovered = self._attempt_reconnect()
-            if not recovered:
-                return False, None
-
-        assert self._browser_server is not None
-        frame_id, frame, frame_ts = self._browser_server.get_latest_frame()
-        if frame is None:
-            self.status = "waiting_for_browser"
-            return False, None
-
-        frame_age = time.time() - frame_ts
-        if frame_age > self._config.browser_frame_timeout_seconds:
-            self.status = "browser_stale"
-            return False, None
-
-        if frame_id == self._browser_last_frame_id:
-            self.status = "connected"
-            return False, None
-
-        self._browser_last_frame_id = frame_id
-        self._consecutive_failures = 0
-        self.status = "connected"
-        return True, frame
 
     def _read_http_snapshot(self) -> tuple[bool, np.ndarray | None]:
         if not self.is_opened():
