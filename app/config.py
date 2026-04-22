@@ -166,6 +166,14 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             defaults.overlay.secondary_box_color,
         ),
         marker_color=_coerce_color(overlay_data.get("marker_color"), defaults.overlay.marker_color),
+        marker_crosshair_color=_coerce_color(
+            overlay_data.get("marker_crosshair_color"),
+            defaults.overlay.marker_crosshair_color,
+        ),
+        marker_dot_color=_coerce_color(
+            overlay_data.get("marker_dot_color"),
+            defaults.overlay.marker_dot_color,
+        ),
         text_color=_coerce_color(overlay_data.get("text_color"), defaults.overlay.text_color),
         accent_color=_coerce_color(overlay_data.get("accent_color"), defaults.overlay.accent_color),
         warning_color=_coerce_color(overlay_data.get("warning_color"), defaults.overlay.warning_color),
@@ -182,6 +190,8 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
         marker_size=int(overlay_data.get("marker_size", defaults.overlay.marker_size)),
         marker_gap=int(overlay_data.get("marker_gap", defaults.overlay.marker_gap)),
         center_radius=int(overlay_data.get("center_radius", defaults.overlay.center_radius)),
+        marker_ring_radius=int(overlay_data.get("marker_ring_radius", defaults.overlay.marker_ring_radius)),
+        marker_dot_radius=int(overlay_data.get("marker_dot_radius", defaults.overlay.marker_dot_radius)),
         font_scale=float(overlay_data.get("font_scale", defaults.overlay.font_scale)),
         font_thickness=int(overlay_data.get("font_thickness", defaults.overlay.font_thickness)),
         padding=int(overlay_data.get("padding", defaults.overlay.padding)),

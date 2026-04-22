@@ -44,14 +44,17 @@ class OverlayRenderer:
         cx, cy = center
         marker_size = self._config.marker_size
         gap = self._config.marker_gap
-        color = self._config.marker_color
+        ring_color = self._config.marker_color
+        crosshair_color = self._config.marker_crosshair_color
+        dot_color = self._config.marker_dot_color
         thickness = self._config.marker_thickness
 
-        cv2.line(frame, (cx - marker_size, cy), (cx - gap, cy), color, thickness)
-        cv2.line(frame, (cx + gap, cy), (cx + marker_size, cy), color, thickness)
-        cv2.line(frame, (cx, cy - marker_size), (cx, cy - gap), color, thickness)
-        cv2.line(frame, (cx, cy + gap), (cx, cy + marker_size), color, thickness)
-        cv2.circle(frame, (cx, cy), self._config.center_radius, color, thickness=-1)
+        cv2.circle(frame, (cx, cy), self._config.marker_ring_radius, ring_color, thickness)
+        cv2.line(frame, (cx - marker_size, cy), (cx - gap, cy), crosshair_color, thickness)
+        cv2.line(frame, (cx + gap, cy), (cx + marker_size, cy), crosshair_color, thickness)
+        cv2.line(frame, (cx, cy - marker_size), (cx, cy - gap), crosshair_color, thickness)
+        cv2.line(frame, (cx, cy + gap), (cx, cy + marker_size), crosshair_color, thickness)
+        cv2.circle(frame, (cx, cy), self._config.marker_dot_radius, dot_color, thickness=-1)
         return frame
 
     def draw_tracks(

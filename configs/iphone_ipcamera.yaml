@@ -26,7 +26,7 @@ overlay:
   debug_overlay: false
   show_fps: true
   show_debug_counters: false
-  show_track_boxes: true
+  show_track_boxes: false
   show_track_crosshair: true
   show_normalized_coords: false
   box_color:
@@ -42,8 +42,16 @@ overlay:
   - 150
   - 150
   marker_color:
+  - 0
+  - 0
+  - 255
+  marker_crosshair_color:
   - 255
   - 255
+  - 255
+  marker_dot_color:
+  - 0
+  - 0
   - 255
   text_color:
   - 240
@@ -68,9 +76,11 @@ overlay:
   box_thickness: 2
   secondary_box_thickness: 1
   marker_thickness: 2
-  marker_size: 32
-  marker_gap: 10
-  center_radius: 5
+  marker_size: 18
+  marker_gap: 5
+  center_radius: 3
+  marker_ring_radius: 14
+  marker_dot_radius: 3
   font_scale: 0.8
   font_thickness: 2
   show_track_labels: true
@@ -101,7 +111,7 @@ tracking:
   keep_confidence_threshold: 0.1
   confirm_frames: 2
   reconfirm_frames: 2
-  hold_without_detection_frames: 10
+  hold_without_detection_frames: 3
   lost_transition_frames: 5
   max_missing_frames: 16
   hard_remove_frames: 24
@@ -111,7 +121,7 @@ tracking:
   min_area_ratio: 0.2
   max_area_ratio: 4.0
   soft_iou_gate: 0.03
-  soft_center_distance_gate: 220
+  soft_center_distance_gate: 150
   soft_min_area_ratio: 0.15
   soft_max_area_ratio: 5.0
   smoothing_alpha: 0.85
@@ -119,7 +129,7 @@ tracking:
   never_drop_confirmed_on_single_bad_frame: true
   keep_lost_tracks: true
   max_active_tracks: 32
-  use_motion_prediction: true
+  use_motion_prediction: false
   display_sort_mode: top_to_bottom_left_to_right
 scene_zones:
   enabled: true
@@ -129,7 +139,16 @@ scene_zones:
   bbox_overlap_threshold: 0.15
   coordinates_mode: normalized
   zone_editor_enabled: false
-  zones: []
+  zones:
+  - name: surface_1
+    enabled: true
+    zone_type: surface
+    shape_type: rect
+    coordinates_mode: normalized
+    x1: 0.040625
+    y1: 0.0375
+    x2: 0.973437
+    y2: 0.965278
 surface_alert:
   enabled: true
   trigger_on_surface_entry: true

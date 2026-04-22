@@ -362,7 +362,9 @@ class OverlayConfig:
     box_color: Color = (0, 200, 255)
     predicted_box_color: Color = (0, 140, 255)
     secondary_box_color: Color = (150, 150, 150)
-    marker_color: Color = (255, 255, 255)
+    marker_color: Color = (0, 0, 255)
+    marker_crosshair_color: Color = (255, 255, 255)
+    marker_dot_color: Color = (0, 0, 255)
     text_color: Color = (240, 240, 240)
     accent_color: Color = (80, 220, 120)
     warning_color: Color = (0, 180, 255)
@@ -374,6 +376,8 @@ class OverlayConfig:
     marker_size: int = 18
     marker_gap: int = 6
     center_radius: int = 3
+    marker_ring_radius: int = 12
+    marker_dot_radius: int = 3
     font_scale: float = 0.55
     font_thickness: int = 1
     padding: int = 8
