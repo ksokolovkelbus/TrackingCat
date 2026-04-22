@@ -108,6 +108,25 @@ cd ~/PycharmProjects/TrackingCatWIFI
 .venv/bin/python -m app.main --config configs/iphone_ipcamera.yaml --zone-editor true --device cpu
 ```
 
+Zone Editor controls:
+
+- Left mouse: select zone or start rectangle
+- Right mouse: finish polygon
+- `r`: rectangle mode
+- `p`: polygon mode
+- `f`: floor zone type
+- `s`: surface zone type
+- `x`: restricted zone type
+- `n`: edit next zone name
+- `u`: undo last polygon point, or remove selected/last zone
+- `c`: clear current draft
+- `d`: delete selected zone
+- `w`: save zones to YAML
+- `l`: reload zones from YAML
+- `q`: quit editor
+
+Important: after save, the config now always stores `scene_zones.zone_editor_enabled: false`, so the next normal launch does not reopen Zone Editor by mistake.
+
 ## Configuration overview
 
 Main sections in each YAML config:

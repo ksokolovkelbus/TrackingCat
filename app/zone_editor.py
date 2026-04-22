@@ -342,6 +342,7 @@ class ZoneEditor:
         payload = replace(
             self._scene_zones,
             coordinates_mode="normalized",
+            zone_editor_enabled=False,
             zones=normalized_zones,
         )
         try:

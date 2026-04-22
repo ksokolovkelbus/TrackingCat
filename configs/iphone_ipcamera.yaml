@@ -12,7 +12,6 @@ source:
   buffer_size: 1
   snapshot_timeout_seconds: 2.0
   snapshot_use_cache_bust: true
-
 detector:
   model_path: yolo26s.pt
   imgsz: 640
@@ -21,9 +20,7 @@ detector:
   device: cpu
   class_name: cat
   max_frame_area_ratio: 0.45
-
 target_selection_strategy: closest_to_center
-
 overlay:
   minimal_overlay: true
   debug_overlay: false
@@ -32,15 +29,42 @@ overlay:
   show_track_boxes: true
   show_track_crosshair: true
   show_normalized_coords: false
-  box_color: [0, 200, 255]
-  predicted_box_color: [0, 140, 255]
-  secondary_box_color: [150, 150, 150]
-  marker_color: [255, 255, 255]
-  text_color: [240, 240, 240]
-  accent_color: [80, 220, 120]
-  warning_color: [0, 180, 255]
-  error_color: [0, 80, 255]
-  background_color: [16, 16, 16]
+  box_color:
+  - 0
+  - 200
+  - 255
+  predicted_box_color:
+  - 0
+  - 140
+  - 255
+  secondary_box_color:
+  - 150
+  - 150
+  - 150
+  marker_color:
+  - 255
+  - 255
+  - 255
+  text_color:
+  - 240
+  - 240
+  - 240
+  accent_color:
+  - 80
+  - 220
+  - 120
+  warning_color:
+  - 0
+  - 180
+  - 255
+  error_color:
+  - 0
+  - 80
+  - 255
+  background_color:
+  - 16
+  - 16
+  - 16
   box_thickness: 2
   secondary_box_thickness: 1
   marker_thickness: 2
@@ -55,20 +79,17 @@ overlay:
   show_cat_count: true
   padding: 8
   line_height: 22
-
 output:
   show_window: true
   save_output: false
   output_path: output/tracking_cat.mp4
   window_name: TrackingCat
-
 logging:
   log_level: INFO
   per_frame_debug: false
   log_coordinates: false
   coordinates_log_path: null
   coordinates_log_format: csv
-
 tracking:
   tracking_enabled: true
   multi_target_enabled: true
@@ -77,7 +98,7 @@ tracking:
   reacquire_after_failed_tracker_frames: 1
   max_tracker_only_frames_without_detection: 4
   acquire_confidence_threshold: 0.28
-  keep_confidence_threshold: 0.10
+  keep_confidence_threshold: 0.1
   confirm_frames: 2
   reconfirm_frames: 2
   hold_without_detection_frames: 10
@@ -87,7 +108,7 @@ tracking:
   reacquire_max_frames: 10
   iou_gate: 0.12
   center_distance_gate: 180
-  min_area_ratio: 0.20
+  min_area_ratio: 0.2
   max_area_ratio: 4.0
   soft_iou_gate: 0.03
   soft_center_distance_gate: 220
@@ -100,7 +121,6 @@ tracking:
   max_active_tracks: 32
   use_motion_prediction: true
   display_sort_mode: top_to_bottom_left_to_right
-
 scene_zones:
   enabled: true
   draw_zones: true
@@ -110,7 +130,6 @@ scene_zones:
   coordinates_mode: normalized
   zone_editor_enabled: false
   zones: []
-
 surface_alert:
   enabled: true
   trigger_on_surface_entry: true
@@ -124,12 +143,12 @@ surface_alert:
   sound_file: sounds/cat_alert.wav
   beep_fallback: true
   continuous_while_in_zone: true
-  continuous_zone_types: [restricted]
+  continuous_zone_types:
+  - restricted
   repeat_interval_seconds: 1.0
   stop_when_zone_empty: true
   show_overlay_message: true
   overlay_message_frames: 20
-
 alert_recording:
   enabled: true
   output_dir: /home/kelbus/PycharmProjects/TrackingCatWIFI/alert_video
@@ -142,7 +161,6 @@ alert_recording:
   include_zone_name: true
   include_track_ids: true
   include_elapsed_seconds: true
-
 resize:
   enabled: false
   width: 960
