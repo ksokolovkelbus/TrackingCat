@@ -87,6 +87,23 @@ If the iPhone IP changes, update `source.stream_url` in `configs/iphone_ipcamera
 | ESP32 snapshot | Simple remote camera over Wi-Fi | Very low resolution |
 | iPhone IP Camera Lite | Best image quality and widest view | Higher bandwidth and possible latency |
 
+## Screenshots
+
+### Webcam safe aiming mode
+![Webcam safe aiming mode](docs/images/webcam-safe.png)
+
+### Webcam visual tracking mode
+![Webcam visual tracking mode](docs/images/webcam-visual.png)
+
+### ESP32 snapshot mode
+![ESP32 snapshot mode](docs/images/esp32.png)
+
+### iPhone IP Camera Lite mode
+![iPhone IP Camera Lite mode](docs/images/iphone.png)
+
+### Zone Editor
+![Zone Editor](docs/images/zone-editor.png)
+
 ## Zone editor
 
 Each camera mode keeps its own config, so zones are independent between webcam, ESP32, and iPhone.
@@ -177,15 +194,22 @@ Main sections in each YAML config:
 
 ## Recommended current usage
 
-### Webcam
-- good default for local testing
-- best when you want stable interactive tuning
+### 1. Webcam safe aiming mode
+- best when you want the most reliable target position
+- stronger choice for tuning zones, alerts, and crosshair placement
+- heavier than visual mode because it re-checks detections more often
 
-### ESP32
+### 2. Webcam visual tracking mode
+- best when you want smoother live viewing
+- lighter and more fluid during normal tracking
+- can be slightly less strict than safe mode during fast motion or tricky frames
+
+### 3. ESP32 snapshot camera
 - useful when you need a lightweight remote camera
 - current camera is low resolution, so expect lower accuracy than webcam or iPhone
+- best for basic presence and zone monitoring
 
-### iPhone
+### 4. iPhone IP Camera Lite
 - best image quality of the current setups
 - currently preferred with wide camera, 4K, 30 FPS at source
 - actual TrackingCat processing FPS may be much lower, which is normal on CPU
