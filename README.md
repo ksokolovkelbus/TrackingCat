@@ -127,6 +127,34 @@ Zone Editor controls:
 
 Important: after save, the config now always stores `scene_zones.zone_editor_enabled: false`, so the next normal launch does not reopen Zone Editor by mistake.
 
+Zone types and what they do:
+
+- `floor`
+  - normal allowed area where the cat can walk
+  - used as the safe baseline state
+  - if `surface_alert.trigger_only_from_floor: true`, then alerts are triggered specifically when the cat moves from `floor` into a dangerous zone
+  - no alert is produced just for being on floor
+
+- `surface`
+  - raised surface like table, kitchen counter, shelf, desk, bed edge, etc.
+  - when the cat enters this zone, the app can create a surface-entry event
+  - if alerts are enabled for this config, the app plays the alert sound and shows the overlay warning message
+  - best for places where you want to know that the cat climbed somewhere, but it is not the highest-priority danger zone
+
+- `restricted`
+  - strict forbidden zone
+  - works like a surface alert zone too, but is treated as higher priority than normal `surface`
+  - if a cat is inside it, alert logic can trigger the same entry event, and continuous alert mode is usually aimed at this type
+  - with the current default configs, continuous sound while the cat remains inside the zone is mainly intended for `restricted` zones
+
+How the app reacts in practice:
+
+- cat on `floor` -> tracking only, no alert
+- cat moves from `floor` to `surface` -> entry alert can fire
+- cat moves from `floor` or unknown area to `restricted` -> entry alert can fire
+- cat stays inside a `restricted` zone -> continuous alert sound may keep playing if enabled in that camera config
+- if zones overlap, `restricted` has priority over `surface`, and `surface` has priority over `floor`
+
 ## Configuration overview
 
 Main sections in each YAML config:
