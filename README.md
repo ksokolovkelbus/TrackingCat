@@ -216,4 +216,4 @@ README.md
 
 - This repository intentionally does not include local virtual environments, logs, alert recordings, backups, certificates, or model weights.
 - Large model files such as `*.pt` are excluded from git.
-- The project is designed for local use on the iMac Ubuntu machine.
+- The project is designed for local use on the Ubuntu machine.
