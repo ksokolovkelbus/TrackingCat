@@ -125,8 +125,6 @@ Zone Editor controls:
 - `l`: reload zones from YAML
 - `q`: quit editor
 
-Important: after save, the config now always stores `scene_zones.zone_editor_enabled: false`, so the next normal launch does not reopen Zone Editor by mistake.
-
 Zone types and what they do:
 
 - `floor`
