@@ -78,6 +78,15 @@ cd ~/PycharmProjects/TrackingCatWIFI
 
 If the iPhone IP changes, update `source.stream_url` in `configs/iphone_ipcamera.yaml`.
 
+## Quick mode guide
+
+| Mode | Best for | Tradeoff |
+| --- | --- | --- |
+| Webcam safe aiming | Accurate aiming, alert tuning, careful monitoring | More CPU load, less visual smoothness |
+| Webcam visual tracking | Smooth live viewing | Slightly more tracker-driven behavior |
+| ESP32 snapshot | Simple remote camera over Wi-Fi | Very low resolution |
+| iPhone IP Camera Lite | Best image quality and widest view | Higher bandwidth and possible latency |
+
 ## Zone editor
 
 Each camera mode keeps its own config, so zones are independent between webcam, ESP32, and iPhone.
