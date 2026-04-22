@@ -9,6 +9,8 @@ It runs on Ubuntu and supports three camera sources:
 
 The project is tuned for CPU inference and is intended for real-time household monitoring, not cloud deployment.
 
+> Note: TrackingCat is still under active development. The screenshots in this README are illustrative references, and the current UI, overlays, colors, and on-screen details may differ from the examples shown here.
+
 ## Features
 
 - cat detection with YOLO models
