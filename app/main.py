@@ -4,19 +4,20 @@ import argparse
 import logging
 import signal
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
 
 import cv2
 import numpy as np
+import yaml
 
 from app.config import ConfigError, load_config, parse_bool
 from app.alert_recorder import AlertRecorder
 from app.audio_alert import AudioAlertPlayer
 from app.detector import DetectorError, YOLODetector
 from app.logger_setup import TrackCoordinateLogger, setup_logging
-from app.models import AppConfig, Detection, FrameTrackingSummary, TrackingPipelineState
+from app.models import AppConfig, Detection, FrameTrackingSummary, StageTimings, TrackingPipelineState
 from app.overlay import OverlayRenderer
 from app.surface_monitor import SurfaceMonitor
 from app.target_selector import TargetSelector
@@ -324,7 +325,10 @@ def main() -> int:
     try:
         source.open()
         while not shutdown_event.is_set():
+            frame_loop_started = time.perf_counter()
+            read_started = time.perf_counter()
             ok, frame = source.read()
+            source_read_ms = (time.perf_counter() - read_started) * 1000.0
             if not ok:
                 if source.status == "ended":
                     logger.info("Input stream ended.")
@@ -337,7 +341,9 @@ def main() -> int:
                 continue
 
             frame_index += 1
+            resize_started = time.perf_counter()
             frame = _maybe_resize_frame(frame, config)
+            resize_ms = (time.perf_counter() - resize_started) * 1000.0
             fps = fps_meter.update()
             timestamp = time.time()
             detection_cycle_due = _should_process_frame(
@@ -346,6 +352,7 @@ def main() -> int:
                 last_summary=last_summary,
             )
 
+            detect_or_track_started = time.perf_counter()
             if tracker_manager is None:
                 summary = _process_detection_only_frame(
                     detector=detector,
@@ -392,8 +399,10 @@ def main() -> int:
                         for detection in detections
                         if detection.confidence >= config.tracking.keep_confidence_threshold
                     )
+            detect_or_track_ms = (time.perf_counter() - detect_or_track_started) * 1000.0
 
             last_summary = summary
+            surface_monitor_started = time.perf_counter()
             _apply_surface_monitoring(
                 summary=summary,
                 surface_monitor=surface_monitor,
@@ -401,14 +410,9 @@ def main() -> int:
                 frame_index=frame_index,
                 timestamp=timestamp,
             )
-            _log_frame_debug(
-                logger=logger,
-                summary=summary,
-                frame_index=frame_index,
-                processed_this_frame=summary.yolo_ran_this_frame,
-                enabled=config.logging.per_frame_debug,
-            )
+            surface_monitor_ms = (time.perf_counter() - surface_monitor_started) * 1000.0
 
+            overlay_started = time.perf_counter()
             if config.scene_zones.enabled and config.scene_zones.draw_zones:
                 overlay.draw_scene_zones(frame, zone_classifier.enabled_zones)
 
@@ -445,6 +449,9 @@ def main() -> int:
             )
             overlay.draw_cat_count(frame, summary.visible_count if summary.tracking_enabled else summary.detection_overlay_count)
             overlay.draw_fps(frame, fps)
+            overlay_ms = (time.perf_counter() - overlay_started) * 1000.0
+
+            alert_recording_started = time.perf_counter()
             summary.alert_recording_state = alert_recorder.process_frame(
                 frame=frame,
                 frame_index=frame_index,
@@ -452,8 +459,11 @@ def main() -> int:
                 fps=fps,
                 active_alert_tracks=summary.active_alert_tracks,
             )
+            alert_recording_ms = (time.perf_counter() - alert_recording_started) * 1000.0
 
+            output_write_ms = 0.0
             if config.output.save_output:
+                output_write_started = time.perf_counter()
                 if video_writer is None:
                     video_writer = _create_video_writer(
                         output_path=config.output.output_path,
@@ -465,8 +475,11 @@ def main() -> int:
                         logger.error("Output writer could not be initialized. Continuing without video saving.")
                 if video_writer is not None:
                     video_writer.write(frame)
+                output_write_ms = (time.perf_counter() - output_write_started) * 1000.0
 
+            window_ms = 0.0
             if window_enabled:
+                window_started = time.perf_counter()
                 try:
                     cv2.imshow(config.output.window_name, frame)
                 except cv2.error:
@@ -477,6 +490,27 @@ def main() -> int:
                     if key == ord("q"):
                         logger.info("Shutdown requested by user via 'q'.")
                         break
+                finally:
+                    window_ms = (time.perf_counter() - window_started) * 1000.0
+
+            summary.stage_timings = StageTimings(
+                source_read_ms=source_read_ms,
+                resize_ms=resize_ms,
+                detect_or_track_ms=detect_or_track_ms,
+                surface_monitor_ms=surface_monitor_ms,
+                overlay_ms=overlay_ms,
+                alert_recording_ms=alert_recording_ms,
+                output_write_ms=output_write_ms,
+                window_ms=window_ms,
+                total_frame_ms=(time.perf_counter() - frame_loop_started) * 1000.0,
+            )
+            _log_frame_debug(
+                logger=logger,
+                summary=summary,
+                frame_index=frame_index,
+                processed_this_frame=summary.yolo_ran_this_frame,
+                enabled=config.logging.per_frame_debug,
+            )
         return 0
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
@@ -630,6 +664,15 @@ def _log_frame_debug(
         summary.held_count,
         summary.lost_count,
         summary.tracking_enabled,
+        summary.stage_timings.source_read_ms,
+        summary.stage_timings.resize_ms,
+        summary.stage_timings.detect_or_track_ms,
+        summary.stage_timings.surface_monitor_ms,
+        summary.stage_timings.overlay_ms,
+        summary.stage_timings.alert_recording_ms,
+        summary.stage_timings.output_write_ms,
+        summary.stage_timings.window_ms,
+        summary.stage_timings.total_frame_ms,
     )
 
 
@@ -672,6 +715,7 @@ def _apply_surface_monitoring(
     )
     summary.track_location_states = result.track_location_states
     summary.surface_events = result.surface_events
+    summary.suppressed_surface_events = result.suppressed_surface_events
     summary.active_alert_tracks = result.active_alert_tracks
     summary.surface_overlay_message = result.overlay_message
 
@@ -753,6 +797,30 @@ def _maybe_resize_frame(frame: np.ndarray, config: AppConfig) -> np.ndarray:
         interpolation=cv2.INTER_LINEAR,
     )
 
+
+def _dump_effective_config(config: AppConfig) -> str:
+    return yaml.safe_dump(asdict(config), sort_keys=False, allow_unicode=True)
+
+
+def _build_config_summary(config: AppConfig) -> str:
+    source_summary = (
+        config.source.stream_url
+        if config.source.source_type in {"rtsp", "http_snapshot"}
+        else config.source.resolved_source()
+    )
+    return (
+        "effective_config_summary "
+        f"source_type={config.source.source_type} "
+        f"source={source_summary} "
+        f"tracking_enabled={config.tracking.tracking_enabled} "
+        f"multi_target={config.tracking.multi_target_enabled} "
+        f"model={config.detector.model_path} "
+        f"device={config.detector.device} "
+        f"imgsz={config.detector.imgsz} "
+        f"show_window={config.output.show_window} "
+        f"save_output={config.output.save_output} "
+        f"zone_editor={config.scene_zones.zone_editor_enabled}"
+    )
 
 def _should_process_frame(
     frame_index: int,

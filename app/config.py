@@ -42,6 +42,19 @@ def parse_bool(value: str | bool) -> bool:
     raise ConfigError(f"Cannot parse boolean value from '{value}'.")
 
 
+def _normalize_yaml_scalars(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _normalize_yaml_scalars(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_yaml_scalars(item) for item in value]
+    if isinstance(value, str):
+        try:
+            return parse_bool(value)
+        except ConfigError:
+            return value
+    return value
+
+
 def load_config(config_path: str | None = None, overrides: dict[str, Any] | None = None) -> AppConfig:
     raw_config = load_raw_config(config_path)
     if overrides:
@@ -69,7 +82,10 @@ def load_raw_config(config_path: str | None) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         raise ConfigError("Root config structure must be a mapping.")
-    return data
+    normalized_data = _normalize_yaml_scalars(data)
+    if not isinstance(normalized_data, dict):
+        raise ConfigError("Root config structure must be a mapping.")
+    return normalized_data
 
 
 def save_scene_zones_config(config_path: str, scene_zones: SceneZonesConfig) -> None:
@@ -389,6 +405,9 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             display_sort_mode=str(
                 tracking_data.get("display_sort_mode", defaults.tracking.display_sort_mode),
             ),
+            frame_tracker_backend=str(
+                tracking_data.get("frame_tracker_backend", defaults.tracking.frame_tracker_backend),
+            ).upper() if str(tracking_data.get("frame_tracker_backend", defaults.tracking.frame_tracker_backend)).lower() != "auto" else "auto",
         ),
         scene_zones=_build_scene_zones_config(scene_zones_data, defaults),
         surface_alert=_build_surface_alert_config(surface_alert_data, defaults),
@@ -509,6 +528,12 @@ def _build_surface_alert_config(surface_alert_data: Mapping[str, Any], defaults:
         ),
         trigger_from_unknown=bool(
             surface_alert_data.get("trigger_from_unknown", defaults.surface_alert.trigger_from_unknown),
+        ),
+        min_floor_frames_before_alert=int(
+            surface_alert_data.get("min_floor_frames_before_alert", defaults.surface_alert.min_floor_frames_before_alert),
+        ),
+        min_zone_frames_before_alert=int(
+            surface_alert_data.get("min_zone_frames_before_alert", defaults.surface_alert.min_zone_frames_before_alert),
         ),
         cooldown_seconds=float(
             surface_alert_data.get("cooldown_seconds", defaults.surface_alert.cooldown_seconds),

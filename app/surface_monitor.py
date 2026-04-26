@@ -21,6 +21,7 @@ from app.zones import SceneZoneClassifier
 class SurfaceMonitorResult:
     track_location_states: dict[int, TrackLocationState]
     surface_events: list[SurfaceEvent]
+    suppressed_surface_events: list[SurfaceEvent]
     active_alert_tracks: list[ActiveAlertTrack]
     overlay_message: str | None
 
@@ -57,7 +58,8 @@ class SurfaceMonitor:
         timestamp: float,
     ) -> SurfaceMonitorResult:
         location_states: dict[int, TrackLocationState] = {}
-        events: list[SurfaceEvent] = []
+        emitted_events: list[SurfaceEvent] = []
+        suppressed_events: list[SurfaceEvent] = []
 
         for track in tracks:
             location_state = self._track_states.get(track.track_id)
@@ -65,7 +67,7 @@ class SurfaceMonitor:
                 location_state = TrackLocationState(track_id=track.track_id)
                 self._track_states[track.track_id] = location_state
 
-            if self._is_alert_eligible_track(track, frame_index):
+            if self._is_alert_eligible_track(track):
                 zone_match = self._classifier.classify_alert_track(
                     track=track,
                     frame_shape=frame_shape,
@@ -93,8 +95,10 @@ class SurfaceMonitor:
                 timestamp=timestamp,
             )
             if surface_event is not None:
-                events.append(surface_event)
-                self._handle_surface_event(surface_event, location_state, frame_index, timestamp)
+                if self._handle_surface_event(surface_event, location_state, frame_index, timestamp):
+                    emitted_events.append(surface_event)
+                else:
+                    suppressed_events.append(surface_event)
 
             location_states[track.track_id] = TrackLocationState(
                 track_id=location_state.track_id,
@@ -109,6 +113,7 @@ class SurfaceMonitor:
                 last_frame_index=location_state.last_frame_index,
                 last_alert_zone_name=location_state.last_alert_zone_name,
                 alert_entered_ts=location_state.alert_entered_ts,
+                current_zone_frames=location_state.current_zone_frames,
             )
 
         active_alert_tracks = self._build_active_alert_tracks(
@@ -133,7 +138,8 @@ class SurfaceMonitor:
 
         return SurfaceMonitorResult(
             track_location_states=location_states,
-            surface_events=events,
+            surface_events=emitted_events,
+            suppressed_surface_events=suppressed_events,
             active_alert_tracks=active_alert_tracks,
             overlay_message=overlay_message,
         )
@@ -221,10 +227,12 @@ class SurfaceMonitor:
         state.previous_zone_type = previous_zone_type
 
         zone_changed = previous_zone_name != zone_name or previous_zone_type != zone_type
+        state.previous_floor_frames = state.floor_frames
         if zone_changed:
             state.current_zone_name = zone_name
             state.current_zone_type = zone_type
             state.last_zone_change_ts = timestamp
+            state.current_zone_frames = 1 if zone_type is not None and zone_name else 0
 
             if zone_type is not None and zone_name:
                 self._logger.info(
@@ -243,6 +251,18 @@ class SurfaceMonitor:
         else:
             state.current_zone_name = zone_name
             state.current_zone_type = zone_type
+            if zone_type is not None and zone_name:
+                state.current_zone_frames += 1
+            else:
+                state.current_zone_frames = 0
+
+        if zone_type == ZoneType.FLOOR:
+            if previous_zone_type == ZoneType.FLOOR and not zone_changed:
+                state.floor_frames += 1
+            else:
+                state.floor_frames = 1
+        else:
+            state.floor_frames = 0
 
         if self._is_surface_like(zone_type):
             if not self._is_surface_like(previous_zone_type) or previous_zone_name != zone_name:
@@ -273,18 +293,36 @@ class SurfaceMonitor:
             return None
 
         previous_zone_type = state.previous_zone_type
+        delayed_same_zone_entry = False
         if self._is_surface_like(previous_zone_type):
-            return None
-        if previous_zone_type is None:
+            delayed_same_zone_entry = (
+                previous_zone_type == state.current_zone_type
+                and state.previous_zone_name == state.current_zone_name
+                and state.last_alert_zone_name != state.current_zone_name
+                and state.current_zone_frames == self._config.min_zone_frames_before_alert
+            )
+            if not delayed_same_zone_entry:
+                return None
+        elif previous_zone_type is None:
             if not self._config.trigger_from_unknown:
                 return None
         elif self._config.trigger_only_from_floor and previous_zone_type != ZoneType.FLOOR:
             return None
 
         if (
+            previous_zone_type == ZoneType.FLOOR
+            and state.previous_floor_frames < self._config.min_floor_frames_before_alert
+        ):
+            return None
+
+        if state.current_zone_frames < self._config.min_zone_frames_before_alert:
+            return None
+
+        if (
             not self._config.repeat_on_same_surface
             and state.last_alert_zone_name == state.current_zone_name
             and previous_zone_type != ZoneType.FLOOR
+            and not delayed_same_zone_entry
         ):
             return None
 
@@ -304,7 +342,7 @@ class SurfaceMonitor:
         state: TrackLocationState,
         frame_index: int,
         timestamp: float,
-    ) -> None:
+    ) -> bool:
         suppressed_reason = self._suppression_reason(state, timestamp)
         if suppressed_reason is not None:
             state.last_alert_zone_name = event.zone_name
@@ -314,7 +352,7 @@ class SurfaceMonitor:
                 event.track_id,
                 event.zone_name,
             )
-            return
+            return False
 
         self._logger.info(
             "surface_alert_emitted track_id=%d zone=%s",
@@ -331,6 +369,7 @@ class SurfaceMonitor:
         if self._config.show_overlay_message and self._config.overlay_message_frames > 0:
             self._overlay_message = event.message
             self._overlay_message_until_frame = frame_index + self._config.overlay_message_frames - 1
+        return True
 
     def _suppression_reason(
         self,
@@ -350,9 +389,5 @@ class SurfaceMonitor:
         return zone_type in {ZoneType.SURFACE, ZoneType.RESTRICTED}
 
     @staticmethod
-    def _is_alert_eligible_track(track: Track, frame_index: int) -> bool:
-        if track.state != TrackState.CONFIRMED:
-            return False
-        if track.last_detection_frame <= 0:
-            return True
-        return (frame_index - track.last_detection_frame) <= 1
+    def _is_alert_eligible_track(track: Track) -> bool:
+        return track.state == TrackState.CONFIRMED

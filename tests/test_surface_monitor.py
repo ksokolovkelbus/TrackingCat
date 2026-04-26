@@ -177,7 +177,26 @@ def test_cooldown_suppresses_repeated_alerts() -> None:
     monitor.update([floor_track], frame_shape=(200, 200, 3), frame_index=3, timestamp=3.0)
     result = monitor.update([surface_track], frame_shape=(200, 200, 3), frame_index=4, timestamp=4.0)
 
-    assert len(result.surface_events) == 1
+    assert result.surface_events == []
+    assert len(result.suppressed_surface_events) == 1
+    assert audio_spy.events == [(1, "table")]
+
+
+def test_surface_entry_hysteresis_waits_required_frames() -> None:
+    monitor, audio_spy = _make_monitor(
+        trigger_from_unknown=True,
+        min_zone_frames_before_alert=2,
+        cooldown_seconds=0.0,
+        min_interval_per_track=0.0,
+    )
+    surface_track = _make_track(1, (30.0, 30.0, 70.0, 95.0))
+
+    first = monitor.update([surface_track], frame_shape=(200, 200, 3), frame_index=1, timestamp=1.0)
+    second = monitor.update([surface_track], frame_shape=(200, 200, 3), frame_index=2, timestamp=2.0)
+
+    assert first.surface_events == []
+    assert len(second.surface_events) == 1
+    assert second.surface_events[0].zone_name == "table"
     assert audio_spy.events == [(1, "table")]
 
 

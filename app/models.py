@@ -124,6 +124,9 @@ class TrackLocationState:
     last_frame_index: int = 0
     last_alert_zone_name: str | None = None
     alert_entered_ts: float = 0.0
+    floor_frames: int = 0
+    previous_floor_frames: int = 0
+    current_zone_frames: int = 0
 
     @property
     def location_label(self) -> str:
@@ -266,6 +269,20 @@ class Track:
         return self.last_detection_frame == frame_index
 
 
+
+
+@dataclass(slots=True)
+class StageTimings:
+    source_read_ms: float = 0.0
+    resize_ms: float = 0.0
+    detect_or_track_ms: float = 0.0
+    surface_monitor_ms: float = 0.0
+    overlay_ms: float = 0.0
+    alert_recording_ms: float = 0.0
+    output_write_ms: float = 0.0
+    window_ms: float = 0.0
+    total_frame_ms: float = 0.0
+
 @dataclass(slots=True)
 class FrameTrackingSummary:
     frame_index: int
@@ -289,9 +306,11 @@ class FrameTrackingSummary:
     removed_track_ids: list[int] = field(default_factory=list)
     track_location_states: dict[int, TrackLocationState] = field(default_factory=dict)
     surface_events: list[SurfaceEvent] = field(default_factory=list)
+    suppressed_surface_events: list[SurfaceEvent] = field(default_factory=list)
     active_alert_tracks: list[ActiveAlertTrack] = field(default_factory=list)
     surface_overlay_message: str | None = None
     alert_recording_state: AlertRecordingState | None = None
+    stage_timings: StageTimings = field(default_factory=StageTimings)
 
     @property
     def visible_count(self) -> int:
@@ -457,6 +476,7 @@ class TrackingConfig:
     max_active_tracks: int = 16
     use_motion_prediction: bool = True
     display_sort_mode: DisplaySortMode = "top_to_bottom_left_to_right"
+    frame_tracker_backend: FrameTrackerBackend = "auto"
 
 
 @dataclass(slots=True)
@@ -478,6 +498,8 @@ class SurfaceAlertConfig:
     alert_point_mode: AlertPointMode = "crosshair_center"
     trigger_only_from_floor: bool = True
     trigger_from_unknown: bool = False
+    min_floor_frames_before_alert: int = 0
+    min_zone_frames_before_alert: int = 1
     cooldown_seconds: float = 2.0
     min_interval_per_track: float = 5.0
     global_min_interval: float = 1.0

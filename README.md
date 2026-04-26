@@ -78,6 +78,12 @@ cd ~/PycharmProjects/TrackingCatWIFI
 ./run_camera.sh iphone
 ```
 
+### iPad
+```bash
+cd ~/PycharmProjects/TrackingCatWIFI
+./run_camera.sh ipad
+```
+
 If the iPhone IP changes, update `source.stream_url` in `configs/iphone_ipcamera.yaml`.
 
 ## Quick mode guide

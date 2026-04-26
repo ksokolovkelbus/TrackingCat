@@ -103,10 +103,10 @@ logging:
 tracking:
   tracking_enabled: true
   multi_target_enabled: true
-  tracker_only_mode_after_confirm: false
-  detector_interval_while_tracking: 1
-  reacquire_after_failed_tracker_frames: 1
-  max_tracker_only_frames_without_detection: 4
+  tracker_only_mode_after_confirm: true
+  detector_interval_while_tracking: 6
+  reacquire_after_failed_tracker_frames: 2
+  max_tracker_only_frames_without_detection: 8
   acquire_confidence_threshold: 0.28
   keep_confidence_threshold: 0.1
   confirm_frames: 2
@@ -131,6 +131,7 @@ tracking:
   max_active_tracks: 32
   use_motion_prediction: false
   display_sort_mode: top_to_bottom_left_to_right
+  frame_tracker_backend: KCF
 scene_zones:
   enabled: true
   draw_zones: true
@@ -139,16 +140,7 @@ scene_zones:
   bbox_overlap_threshold: 0.15
   coordinates_mode: normalized
   zone_editor_enabled: false
-  zones:
-  - name: surface_1
-    enabled: true
-    zone_type: surface
-    shape_type: rect
-    coordinates_mode: normalized
-    x1: 0.040625
-    y1: 0.0375
-    x2: 0.973437
-    y2: 0.965278
+  zones: []
 surface_alert:
   enabled: true
   trigger_on_surface_entry: true

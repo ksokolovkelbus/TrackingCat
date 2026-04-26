@@ -44,14 +44,15 @@ class FrameTrackerWrapper:
 class OpenCvFrameTracker(FrameTrackerWrapper):
     _BACKEND_PRIORITY = ("CSRT", "KCF", "MIL")
 
-    def __init__(self) -> None:
-        tracker_bundle = self._create_tracker()
+    def __init__(self, preferred_backend: str = "auto") -> None:
+        tracker_bundle = self._create_tracker(preferred_backend)
         self._tracker = tracker_bundle[0] if tracker_bundle is not None else None
         self.backend_name = tracker_bundle[1] if tracker_bundle is not None else None
 
     @classmethod
-    def _create_tracker(cls) -> tuple[object, str] | None:
-        for backend_name in cls._BACKEND_PRIORITY:
+    def _create_tracker(cls, preferred_backend: str = "auto") -> tuple[object, str] | None:
+        backend_priority = cls._backend_priority(preferred_backend)
+        for backend_name in backend_priority:
             factory = cls._resolve_backend_factory(backend_name)
             if factory is None:
                 continue
@@ -60,6 +61,15 @@ class OpenCvFrameTracker(FrameTrackerWrapper):
             except Exception:
                 continue
         return None
+
+    @classmethod
+    def _backend_priority(cls, preferred_backend: str) -> tuple[str, ...]:
+        normalized = preferred_backend.upper()
+        if normalized == "AUTO":
+            return cls._BACKEND_PRIORITY
+        if normalized not in cls._BACKEND_PRIORITY:
+            return cls._BACKEND_PRIORITY
+        return (normalized,) + tuple(name for name in cls._BACKEND_PRIORITY if name != normalized)
 
     @staticmethod
     def _resolve_backend_factory(backend_name: str) -> Callable[[], object] | None:
@@ -905,7 +915,7 @@ class DetectThenTrackManager:
         self._config = config
         self._logger = logger
         self._track_manager = MultiCatTracker(config=config, logger=logger)
-        self._frame_tracker_factory = frame_tracker_factory or OpenCvFrameTracker
+        self._frame_tracker_factory = frame_tracker_factory or (lambda: OpenCvFrameTracker(config.frame_tracker_backend))
         self._frame_trackers: dict[int, FrameTrackerWrapper] = {}
         self._last_detector_frame = 0
         self._had_confirmed_track = False

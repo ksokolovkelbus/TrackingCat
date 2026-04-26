@@ -409,3 +409,22 @@ def test_opencv_frame_tracker_falls_back_to_mil_backend() -> None:
 
     assert tracker.backend_name == "MIL"
     assert factory_calls == ["CSRT", "KCF", "MIL"]
+
+
+
+def test_opencv_frame_tracker_prefers_configured_backend() -> None:
+    with patch.object(OpenCvFrameTracker, '_resolve_backend_factory') as resolver:
+        resolver.side_effect = lambda name: (lambda: object()) if name in {'KCF', 'MIL'} else None
+
+        tracker = OpenCvFrameTracker(preferred_backend='KCF')
+
+    assert tracker.backend_name == 'KCF'
+
+
+def test_opencv_frame_tracker_falls_back_when_preferred_backend_missing() -> None:
+    with patch.object(OpenCvFrameTracker, '_resolve_backend_factory') as resolver:
+        resolver.side_effect = lambda name: (lambda: object()) if name == 'MIL' else None
+
+        tracker = OpenCvFrameTracker(preferred_backend='KCF')
+
+    assert tracker.backend_name == 'MIL'

@@ -86,3 +86,39 @@ scene_zones:
     assert editor._scene_zones.zone_editor_enabled is True
     raw = load_raw_config(str(config_path))
     assert raw["scene_zones"]["zone_editor_enabled"] is False
+
+
+def test_quoted_yaml_boolean_strings_are_normalized(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+overlay:
+  show_fps: "false"
+output:
+  show_window: "true"
+scene_zones:
+  enabled: "true"
+  draw_zones: "false"
+  zones:
+    - name: table
+      enabled: "false"
+      zone_type: surface
+      shape_type: rect
+      x1: 10
+      y1: 10
+      x2: 20
+      y2: 20
+surface_alert:
+  enabled: "false"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.overlay.show_fps is False
+    assert config.output.show_window is True
+    assert config.scene_zones.enabled is True
+    assert config.scene_zones.draw_zones is False
+    assert config.scene_zones.zones[0].enabled is False
+    assert config.surface_alert.enabled is False

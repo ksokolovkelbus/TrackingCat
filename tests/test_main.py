@@ -1,6 +1,6 @@
 import logging
 
-from app.main import _adjust_detector_threshold_for_runtime_mode, _should_process_frame
+from app.main import _adjust_detector_threshold_for_runtime_mode, _build_config_summary, _dump_effective_config, _should_process_frame
 from app.models import AppConfig, FrameTrackingSummary
 
 
@@ -47,3 +47,26 @@ def test_should_process_frame_respects_process_every_n_frames() -> None:
     assert _should_process_frame(frame_index=2, process_every_n_frames=3, last_summary=summary) is False
     assert _should_process_frame(frame_index=3, process_every_n_frames=3, last_summary=summary) is False
     assert _should_process_frame(frame_index=4, process_every_n_frames=3, last_summary=summary) is True
+
+
+def test_dump_effective_config_includes_expected_values() -> None:
+    config = AppConfig()
+    config.output.show_window = False
+    dumped = _dump_effective_config(config)
+
+    assert "output:" in dumped
+    assert "show_window: false" in dumped
+
+
+def test_build_config_summary_contains_key_runtime_settings() -> None:
+    config = AppConfig()
+    config.source.source_type = "http_snapshot"
+    config.source.stream_url = "http://cam.local/snapshot.jpg"
+    config.output.show_window = False
+
+    summary = _build_config_summary(config)
+
+    assert "source_type=http_snapshot" in summary
+    assert "source=http://cam.local/snapshot.jpg" in summary
+    assert "tracking_enabled=True" in summary
+    assert "show_window=False" in summary

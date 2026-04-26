@@ -1,0 +1,861 @@
+Ниже — review **по присланным файлам**, а не по гипотезам. Важное ограничение: в наборе нет `video_source.py`, `alert_recorder.py`, `audio_alert.py`, `logger_setup.py`, поэтому по ним я оцениваю только контракты и точки интеграции из `main.py`, а не внутреннюю реализацию.
+
+# 1. Краткая карта архитектуры
+
+| Слой                    | Файлы                          | Что делает                                                                                                                   | Оценка                                                                                                |
+| ----------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Runtime / orchestration | `main.py`                      | CLI, загрузка конфига, создание detector/source/tracker/zones/alerts/overlay/recorder, основной цикл обработки кадров        | Работает, но `main.py` уже стал центром слишком многих ответственностей                               |
+| Config layer            | `config.py`, `models.py`, YAML | Dataclass-конфиги, YAML load/save, validation, CLI overrides                                                                 | В целом сильная часть проекта, но есть риск с `bool(...)` для строковых YAML-значений                 |
+| Detector                | `detector.py`                  | YOLO загрузка, inference, фильтр class/conf/oversized bbox                                                                   | Достаточно изолирован; CPU bottleneck ожидаемо здесь, но не только здесь                              |
+| Tracker                 | `tracker.py`                   | `MultiCatTracker`, lifecycle `TENTATIVE/CONFIRMED/HELD/LOST/REMOVED`, detect-then-track manager, OpenCV tracker CSRT/KCF/MIL | Неплохая практичная логика; главный риск — взаимодействие tracker-only режима с zone/alert            |
+| Zone logic              | `zones.py`                     | Проекция зон, point-in-zone, track/alert classification, priority                                                            | Хорошо вынесено отдельно; есть нюанс: alert и visual classification используют разные правила         |
+| Alert / zone state      | `surface_monitor.py`           | Track zone state, surface/restricted events, cooldown, continuous audio, overlay message                                     | Функционально полезно, но смешивает state machine, alert policy, audio side effects и overlay message |
+| Overlay / UI            | `overlay.py`, `zone_editor.py` | Отрисовка треков, зон, FPS, alert recording status, zone editor                                                              | В целом нормально, но overlay встроен в hot path                                                      |
+| Camera modes            | YAML + `VideoSource`           | webcam/file/rtsp/http_snapshot, разные camera configs                                                                        | Интерфейс из `main.py` простой: `ok, frame`; не хватает metadata кадра                                |
+
+`main.py` действительно является orchestration hub: он загружает конфиг, запускает Zone Editor, создаёт detector/source/tracker/overlay/surface monitor/alert recorder и потом в одном loop читает кадры, запускает detector/tracker, обновляет зоны, пишет overlay, recording, GUI и output video. Это не “плохо”, но это зона будущих регрессий.
+
+Хорошая новость: core-типы уже вынесены в `models.py`: есть `Detection`, `TrackState`, `TrackingPipelineState`, `ZoneType`, `SceneZone`, `TrackLocationState`, `SurfaceEvent`, `ActiveAlertTrack`, `FrameTrackingSummary`, config dataclasses. Это правильная база, её не нужно переписывать.
+
+# 2. Найденные проблемы
+
+## 2.1. Самый важный риск: alert/zone logic ломается в tracker-only режиме
+
+В `DetectThenTrackManager.should_run_detector()` detector может не запускаться каждый кадр: когда `tracker_only_mode_after_confirm=True`, система между YOLO refresh-ами использует OpenCV tracker.
+
+Но `SurfaceMonitor._is_alert_eligible_track()` классифицирует зону только если track `CONFIRMED` и последний YOLO detection был не старше одного кадра:
+
+```python
+if track.last_detection_frame <= 0:
+    return True
+return (frame_index - track.last_detection_frame) <= 1
+```
+
+То есть в tracker-only режиме через 2 кадра после YOLO track может перестать участвовать в zone classification, даже если OpenCV tracker уверенно обновляет bbox. Это может давать мигание `current_zone=None`, сброс `active_alert_tracks`, нестабильный continuous alert и нестабильную запись инцидентов.
+
+Это сейчас, на мой взгляд, главный кандидат на “почему система не как швейцарские часы”.
+
+**Что менять:** `surface_monitor.py`.
+
+**Безопасная политика:**
+
+* `CONFIRMED` track классифицировать всегда по текущему bbox.
+* `HELD` track можно либо классифицировать по последнему bbox с ограничением, либо не давать ему генерировать новые entry events, но разрешить удерживать active alert короткое время.
+* Не привязывать zone classification к свежести YOLO detection; свежесть YOLO должна влиять на confidence/policy, а не обнулять location state.
+
+---
+
+## 2.2. `SurfaceMonitor` возвращает candidate events как будто они emitted
+
+В `SurfaceMonitor.update()` событие добавляется в `events`, а уже потом `_handle_surface_event()` может его подавить из-за cooldown/global interval/per-track interval.
+
+Сейчас результат называется `surface_events`, но фактически там могут быть события, по которым звук не проигран. Это опасно, если `AlertRecorder` или будущая логика начнёт считать `surface_events` именно “реальными alert events”.
+
+**Что менять:** `surface_monitor.py`, `models.py`.
+
+**Лучше:** вернуть `AlertDecision` или минимум разделить:
+
+```python
+emitted_surface_events: list[SurfaceEvent]
+suppressed_surface_events: list[SuppressedSurfaceEvent]
+```
+
+---
+
+## 2.3. Нет hysteresis на вход в surface/restricted
+
+Сейчас есть `min_floor_frames_before_alert`, то есть защита “перед входом кот должен побыть на floor”. В YAML для webcam safe это `4` кадра.
+
+Но нет симметричного условия “кот должен быть в surface/restricted N кадров перед alert”. Поэтому jitter центра bbox на границе зоны может дать entry event на первом же кадре.
+
+**Что менять:** `models.py`, `config.py`, `surface_monitor.py`, YAML.
+
+Добавить:
+
+```yaml
+surface_alert:
+  min_zone_frames_before_alert: 2
+  min_zone_dwell_seconds_before_alert: 0.15
+```
+
+Для `restricted` можно оставить более агрессивно:
+
+```yaml
+restricted_min_zone_frames_before_alert: 1
+surface_min_zone_frames_before_alert: 2
+```
+
+---
+
+## 2.4. Zone classification для track и alert использует разные правила
+
+В `SceneZoneClassifier.classify_track()` используется foot point + bbox overlap threshold. В `classify_alert_track()` используется только `track_crosshair_point`, то есть центр/crosshair.
+
+Это может быть нормально, если так задумано, но operationally это риск:
+
+* overlay/track location может говорить одно;
+* alert logic может видеть другое;
+* на границе зоны центр bbox ещё вне restricted, хотя лапы/тело уже внутри.
+
+Плюс `bbox_overlap_ratio()` использует bounding box зоны, а не реальное polygon intersection. Для polygon-зон сложной формы это может давать ложный overlap.
+
+**Что менять:** сначала тесты в `tests/test_zones.py`, потом `zones.py`.
+
+Не обязательно сразу делать polygon intersection. Но надо явно зафиксировать expected behavior.
+
+---
+
+## 2.5. `SurfaceMonitor` смешивает 4 ответственности
+
+В одном классе сейчас:
+
+1. zone state per track;
+2. alert event policy;
+3. cooldown/suppression;
+4. audio side effects;
+5. overlay message state.
+
+Это видно по тому, что `SurfaceMonitor` принимает `SceneZoneClassifier`, `SurfaceAlertConfig`, `logger`, `AudioAlertPlayer`, хранит `_track_states`, `_last_global_sound_ts`, `_overlay_message`, вызывает `play()`/`start_continuous()`/`stop_continuous()`.
+
+Это ещё не катастрофа, но именно здесь будут самые болезненные регрессии.
+
+**Не надо сразу выносить в 5 файлов.**
+Первый безопасный шаг — внутри `surface_monitor.py` разделить приватно:
+
+```text
+ZoneStateUpdater
+AlertPolicy
+AlertActuator
+```
+
+И только потом, если станет удобно, вынести в отдельные модули.
+
+---
+
+## 2.6. Config layer хороший, но `bool(...)` опасен
+
+В `config.py` многие поля строятся через `bool(value)`. Для настоящих YAML boolean это нормально, но если в YAML случайно появится строка `"false"`, Python даст `True`.
+
+Пример зоны: `enabled=bool(scene_zones_data.get(...))`.
+
+CLI защищён `parse_bool`, но YAML — нет.
+
+**Что менять:** `config.py`.
+
+Добавить `_coerce_bool(value, field_name)`:
+
+* bool → как есть;
+* int 0/1 → bool;
+* string `"true"/"false"/"yes"/"no"/"on"/"off"` → parse;
+* иначе `ConfigError`.
+
+Это low-risk, но обязательно добавить tests.
+
+---
+
+## 2.7. CPU performance: не хватает stage timings
+
+Сейчас есть `FPSMeter`, но он меряет общий FPS между итерациями.
+
+Не видно, где реально bottleneck:
+
+* source read/decode;
+* resize;
+* YOLO;
+* tracker update;
+* surface monitor;
+* overlay;
+* alert recording;
+* `cv2.imshow`;
+* video writer.
+
+Без этого оптимизация будет гаданием. Особенно для iPhone MJPEG и ESP32 snapshot.
+
+**Что менять:** `main.py`, возможно новый `performance.py`.
+
+---
+
+## 2.8. OpenCV tracker backend order не конфигурируется
+
+`OpenCvFrameTracker` выбирает backend в порядке `CSRT`, `KCF`, `MIL`.
+
+CSRT обычно точнее, но тяжелее на CPU. Для “visual tracking mode” или слабой машины KCF может быть практичнее. Сейчас это нельзя переключить из YAML.
+
+**Что менять:** `models.py`, `config.py`, `tracker.py`, YAML presets.
+
+Добавить:
+
+```yaml
+tracking:
+  frame_tracker_backend: KCF
+```
+
+Или:
+
+```yaml
+tracking:
+  frame_tracker_backends: [KCF, CSRT, MIL]
+```
+
+---
+
+## 2.9. `main.py` перегружен, но переписывать его не надо
+
+Текущий loop делает всё в одном месте: read, resize, FPS, detector/tracker, surface monitoring, coordinate logging, zone drawing, status, alert recorder, output writer, GUI.
+
+Это не повод “переписать всё”. Но стоит вынести безопасные функции:
+
+```python
+read_frame_step()
+tracking_step()
+alert_step()
+render_step()
+recording_step()
+```
+
+Или один объект:
+
+```python
+TrackingRuntime.process_frame(frame, timestamp) -> FrameResult
+```
+
+Но это этап после тестов.
+
+---
+
+## 2.10. Absolute path в alert recording config
+
+В `webcam_aiming_safe.yaml`:
+
+```yaml
+alert_recording:
+  output_dir: /home/kelbus/PycharmProjects/TrackingCatWIFI/alert_video
+```
+
+Это работает локально, но снижает переносимость и может ломать запуск из другого checkout.
+
+**Что менять:** YAML + config path resolution.
+
+Лучше:
+
+```yaml
+alert_recording:
+  output_dir: alert_video
+```
+
+И резолвить относительно project root/config dir/current working dir по явному правилу.
+
+---
+
+# 3. Топ-10 улучшений по приоритету
+
+|  # | Улучшение                                                | Файлы                                                | Зачем                                                                               | Эффект                                       | Сложность | Риск                                      | Тест до изменения                  |
+| -: | -------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------- | --------- | ----------------------------------------- | ---------------------------------- |
+|  1 | Исправить zone classification для tracker-only режима    | `surface_monitor.py`                                 | Сейчас alert state зависит от свежего YOLO detection, а не от текущего tracked bbox | Стабильные continuous alerts/recording/zones | Средняя   | Средний                                   | Да                                 |
+|  2 | Разделить emitted/suppressed surface events              | `surface_monitor.py`, `models.py`, `main.py`         | Сейчас suppressed event может выглядеть как реальный event                          | Предсказуемая запись инцидентов и алертов    | Средняя   | Средний                                   | Да                                 |
+|  3 | Добавить entry hysteresis для surface/restricted         | `models.py`, `config.py`, `surface_monitor.py`, YAML | Убрать false alerts на границах зон                                                 | Меньше ложных тревог                         | Средняя   | Средний                                   | Да                                 |
+|  4 | Добавить stage timing telemetry                          | `main.py`, новый `performance.py`                    | Понять реальные CPU bottlenecks                                                     | Быстрая диагностика FPS/latency              | Низкая    | Низкий                                    | Нет, но можно snapshot test логики |
+|  5 | Сделать OpenCV tracker backend конфигурируемым           | `tracker.py`, `models.py`, `config.py`, YAML         | CSRT может быть тяжёлым на CPU                                                      | Лучше FPS на CPU                             | Средняя   | Средний                                   | Да, через fake tracker factory     |
+|  6 | Заменить `bool(...)` на `_coerce_bool`                   | `config.py`                                          | Защититься от `"false" -> True`                                                     | Надёжные YAML configs                        | Низкая    | Средний: может выявить старые кривые YAML | Да                                 |
+|  7 | Добавить `--dry-run-config` / `--print-effective-config` | `main.py`, `config.py`                               | Проверять конфиги без запуска камеры/model                                          | Быстрее DX, меньше runtime сюрпризов         | Низкая    | Низкий                                    | Желательно                         |
+|  8 | Добавить source/frame metadata contract                  | `models.py`, `video_source.py`, `main.py`            | Нужны timestamp/read latency/stale frame/dropped frames                             | Стабильнее HTTP/iPhone/ESP32 debugging       | Средняя   | Средний                                   | Да                                 |
+|  9 | Зафиксировать zone priority и polygon edge cases тестами | `zones.py`, tests                                    | Приоритет зон критичен для safety behavior                                          | Меньше скрытых регрессий                     | Низкая    | Низкий                                    | Да                                 |
+| 10 | Убрать per-frame INFO logs из tracker hot path           | `tracker.py`                                         | Логи могут тормозить и засорять runtime                                             | Ниже I/O overhead                            | Низкая    | Низкий                                    | Нет                                |
+
+# 4. Пошаговый план внедрения
+
+## Quick wins на 1–2 часа
+
+### 4.1. Добавить regression test на tracker-only + zone classification
+
+**Что менять:** сначала tests, потом `surface_monitor.py`.
+
+Тест должен воспроизвести проблему:
+
+```text
+frame 10: CONFIRMED track, last_detection_frame=8, bbox внутри restricted
+tracker-only update продолжает двигать bbox
+SurfaceMonitor.update(...)
+=> current_zone_type должен остаться restricted, active_alert_tracks не должен пустеть
+```
+
+**Зачем:** это главный риск стабильности.
+
+**Эффект:** continuous alert и alert recording перестанут “мигать” из-за отсутствия YOLO на каждом кадре.
+
+**Сложность:** низкая/средняя.
+
+**Риск:** средний, потому что изменится поведение alert pipeline.
+
+---
+
+### 4.2. Downgrade per-frame tracker logs
+
+**Что менять:** `tracker.py`.
+
+В `_update_matched_track()` лог `track_updated` сейчас может стрелять очень часто. Его лучше перевести в `DEBUG` или завязать на `per_frame_debug`.
+
+**Зачем:** снизить шум и I/O overhead.
+
+**Эффект:** меньше лог-мусора, стабильнее CPU на слабой машине.
+
+**Сложность:** низкая.
+
+**Риск:** низкий.
+
+---
+
+### 4.3. Добавить `--dry-run-config`
+
+**Что менять:** `main.py`.
+
+Пример:
+
+```bash
+python -m app.main --config configs/webcam_aiming_safe.yaml --dry-run-config
+```
+
+Проверяет:
+
+* YAML parse;
+* config validation;
+* source fields;
+* detector path exists или хотя бы path visible;
+* zones count;
+* alert recording path;
+* resize dimensions;
+* mode summary.
+
+**Зачем:** быстро проверять конфиги камер без OpenCV window и YOLO load.
+
+**Эффект:** лучше DX, меньше “запустил и упало через 10 секунд”.
+
+**Сложность:** низкая.
+
+**Риск:** низкий.
+
+---
+
+### 4.4. Добавить startup summary
+
+**Что менять:** `main.py`.
+
+На старте логировать одной строкой:
+
+```text
+mode source=webcam size=800x450 detector=yolo26n.pt imgsz=640 device=cpu
+tracking=multi detect_every=1 tracker_only=false zones=3 alerts=true recording=true
+```
+
+Данные уже есть в config/YAML. Например webcam safe использует webcam 800x450, `process_every_n_frames: 1`, `yolo26n.pt`, `imgsz: 640`, `device: cpu`.
+
+**Зачем:** после запуска сразу понятно, какой режим реально активен.
+
+**Эффект:** меньше ошибок при переключении камер.
+
+**Сложность:** низкая.
+
+**Риск:** низкий.
+
+---
+
+## Улучшения на 1 день
+
+### 4.5. Исправить `SurfaceMonitor._is_alert_eligible_track`
+
+**Что менять:** `surface_monitor.py`.
+
+Текущая проблема — eligibility завязана на `last_detection_frame`. Нужно заменить на policy примерно такого вида:
+
+```python
+def _is_zone_classification_eligible(track: Track) -> bool:
+    return track.state in {TrackState.CONFIRMED, TrackState.HELD}
+```
+
+А для **генерации новых entry alerts** использовать более строгую policy:
+
+```python
+def _can_emit_new_entry_alert(track: Track, frame_index: int) -> bool:
+    if track.state != TrackState.CONFIRMED:
+        return False
+    return True
+```
+
+То есть:
+
+* классифицировать зону можно по текущему bbox tracker-а;
+* создавать новый alert лучше только для `CONFIRMED`;
+* `HELD` можно использовать для удержания текущего continuous alert короткое время, но не для нового entry.
+
+**Зачем:** не обнулять zone state в tracker-only mode.
+
+**Эффект:** максимальный прирост стабильности.
+
+**Сложность:** средняя.
+
+**Риск:** средний.
+
+**Тест обязателен:** да.
+
+---
+
+### 4.6. Разделить candidate event и emitted event
+
+**Что менять:** `surface_monitor.py`, `models.py`, возможно `main.py`.
+
+Сейчас `_maybe_build_surface_event()` создаёт event, потом `_handle_surface_event()` может его подавить.
+
+Лучше:
+
+```python
+@dataclass(frozen=True)
+class AlertDecision:
+    event: SurfaceEvent
+    emitted: bool
+    suppressed_reason: str | None
+```
+
+Или проще:
+
+```python
+SurfaceMonitorResult(
+    emitted_surface_events=[...],
+    suppressed_surface_events=[...],
+)
+```
+
+**Зачем:** downstream code не должен гадать, был ли alert реально emitted.
+
+**Эффект:** чище incident recording и будущие тесты.
+
+**Сложность:** средняя.
+
+**Риск:** средний.
+
+**Тест обязателен:** да.
+
+---
+
+### 4.7. Добавить `_coerce_bool` для YAML
+
+**Что менять:** `config.py`.
+
+Сейчас много мест используют `bool(...)`. Это лучше заменить постепенно, начиная с критичных секций:
+
+* `source`;
+* `tracking`;
+* `scene_zones`;
+* `surface_alert`;
+* `alert_recording`;
+* `resize`;
+* `overlay`.
+
+**Зачем:** исключить тихие ошибки YAML.
+
+**Эффект:** надёжнее конфиги.
+
+**Сложность:** низкая/средняя.
+
+**Риск:** средний, потому что старые “небрежные” значения могут начать падать с `ConfigError`. Это хорошо, но тесты нужны.
+
+---
+
+### 4.8. Добавить stage timing telemetry
+
+**Что менять:** `main.py`, возможно новый `app/performance.py`.
+
+Минимально:
+
+```python
+with timer.measure("detect"):
+    detections = detector.detect(frame)
+```
+
+Раз в 5 секунд логировать:
+
+```text
+perf fps=8.4 read_ms=12 resize_ms=1 detect_ms=94 track_ms=3 zones_ms=1 overlay_ms=5 record_ms=2 imshow_ms=4
+```
+
+**Зачем:** для CPU-only это must-have.
+
+**Эффект:** станет понятно, что оптимизировать: YOLO, tracker, MJPEG decode, overlay или recording.
+
+**Сложность:** низкая/средняя.
+
+**Риск:** низкий.
+
+---
+
+## Улучшения на 2–3 дня
+
+### 4.9. Добавить entry hysteresis для alert zones
+
+**Что менять:**
+
+* `SurfaceAlertConfig` в `models.py`;
+* `_build_surface_alert_config()` и `_validate_config()` в `config.py`;
+* `TrackLocationState` или отдельное состояние в `surface_monitor.py`;
+* YAML presets.
+
+Добавить счётчик:
+
+```python
+candidate_zone_name
+candidate_zone_type
+candidate_zone_frames
+candidate_zone_since_ts
+```
+
+Alert fire только если:
+
+```text
+candidate zone == current zone
+candidate_zone_frames >= min_zone_frames_before_alert
+```
+
+**Зачем:** убрать ложные срабатывания на границах.
+
+**Эффект:** alert behavior станет предсказуемее.
+
+**Сложность:** средняя.
+
+**Риск:** средний.
+
+**Тест обязателен:** да, sequence tests.
+
+---
+
+### 4.10. Конфигурируемый OpenCV tracker backend
+
+**Что менять:**
+
+* `TrackingConfig` в `models.py`;
+* config parse/validate в `config.py`;
+* `OpenCvFrameTracker` в `tracker.py`;
+* YAML modes.
+
+Сейчас порядок backend фиксирован: CSRT → KCF → MIL.
+
+Для CPU можно сделать:
+
+```yaml
+tracking:
+  frame_tracker_backends:
+    - KCF
+    - CSRT
+    - MIL
+```
+
+Для accuracy mode:
+
+```yaml
+tracking:
+  frame_tracker_backends:
+    - CSRT
+    - KCF
+    - MIL
+```
+
+**Зачем:** дать CPU-friendly режимам быстрый tracker.
+
+**Эффект:** потенциально заметный FPS gain в tracker-only modes.
+
+**Сложность:** средняя.
+
+**Риск:** средний: KCF может быть менее точным.
+
+**Тест:** fake factory + integration smoke.
+
+---
+
+### 4.11. Вынести части main loop в маленькие функции
+
+**Что менять:** `main.py`.
+
+Не делать сразу `RuntimeEngine` на 500 строк. Достаточно:
+
+```python
+def _run_tracking_step(...)
+def _run_surface_step(...)
+def _draw_overlay_step(...)
+def _run_recording_step(...)
+```
+
+**Зачем:** сейчас любое изменение в loop рискует задеть GUI/recording/alerts.
+
+**Эффект:** проще тестировать и безопасно менять.
+
+**Сложность:** средняя.
+
+**Риск:** средний.
+
+**Тест:** smoke test `process_detections`, surface monitor, maybe fake detector/source later.
+
+---
+
+### 4.12. Подготовить `FramePacket` / source metadata
+
+**Что менять:** `models.py`, `video_source.py`, `main.py`.
+
+Сейчас `main.py` работает с `ok, frame` и `source.status`.
+
+Для нескольких камер лучше:
+
+```python
+@dataclass(frozen=True)
+class FramePacket:
+    frame: np.ndarray
+    source_id: str
+    frame_index: int | None
+    captured_at_ts: float
+    received_at_ts: float
+    read_ms: float
+    decode_ms: float | None = None
+    stale: bool = False
+```
+
+**Зачем:** ESP32 snapshot и iPhone MJPEG имеют latency/stale frame проблемы.
+
+**Эффект:** лучше диагностика и стабильность source layer.
+
+**Сложность:** средняя/высокая.
+
+**Риск:** средний.
+
+**Тест:** нужен fake source.
+
+---
+
+# 5. Какие файлы менять первыми
+
+## Первый заход
+
+1. `surface_monitor.py`
+   Самый высокий impact. Исправить tracker-only zone eligibility, emitted/suppressed semantics, потом entry hysteresis.
+
+2. `tests/test_surface_monitor.py`
+   До изменения `surface_monitor.py`.
+
+3. `config.py`
+   `_coerce_bool`, dry-run validation helpers, новые alert config fields.
+
+4. `models.py`
+   Добавить новые config fields и, возможно, новые result dataclasses.
+
+5. `main.py`
+   `--dry-run-config`, performance timings, небольшой split шагов.
+
+## Второй заход
+
+6. `tracker.py`
+   Configurable backend, логирование, public methods вместо доступа к private methods.
+
+7. `zones.py`
+   Тесты priority/edge cases, потом возможное уточнение alert point mode.
+
+8. YAML configs
+   Обновить только после того, как config parser и tests готовы.
+
+9. `zone_editor.py`
+   Сейчас save behavior уже выглядит правильным: перед сохранением зоны нормализуются, а `zone_editor_enabled` принудительно пишется как `False`. Это как раз защищает от старого sticky bug.
+   Поэтому этот файл не трогать первым, кроме тестов.
+
+# 6. Какие тесты добавить до рефакторинга
+
+## Surface / alert tests
+
+1. **Tracker-only zone persistence**
+
+```text
+CONFIRMED track внутри restricted
+last_detection_frame старше 1 кадра
+bbox актуальный
+=> SurfaceMonitor всё равно видит restricted
+```
+
+2. **HELD track policy**
+
+```text
+track HELD в restricted
+=> либо удерживает active alert short-term, либо не создаёт новый entry alert
+```
+
+Важно зафиксировать выбранное поведение.
+
+3. **Suppressed event не считается emitted**
+
+```text
+первый alert emitted
+второй через 0.5s suppressed by cooldown
+=> emitted_events == 1
+=> suppressed_events == 1
+```
+
+4. **Entry hysteresis**
+
+```text
+floor 4 frames
+surface 1 frame
+floor 1 frame
+=> no alert if min_zone_frames_before_alert=2
+```
+
+5. **Continuous restricted**
+
+```text
+track stays restricted
+=> start_continuous called
+track leaves / removed
+=> stop_continuous called
+```
+
+---
+
+## Zone tests
+
+1. **Priority overlap**
+
+```text
+point попадает в floor + surface + restricted
+=> restricted
+```
+
+Priority documented in README as `restricted > surface > floor`.
+
+2. **Surface over floor**
+
+```text
+point попадает в floor + surface
+=> surface
+```
+
+3. **Polygon bounding box trap**
+
+```text
+point внутри bbox polygon, но вне polygon
+=> classify_point returns None
+```
+
+4. **Normalized projection**
+
+```text
+normalized zone при frame 800x450 даёт ожидаемые pixel bounds
+```
+
+---
+
+## Config tests
+
+1. **Quoted bool**
+
+```yaml
+surface_alert:
+  enabled: "false"
+```
+
+Ожидание: либо корректно `False`, либо явный `ConfigError`, но не `True`.
+
+2. **Invalid zone type**
+
+```yaml
+zone_type: forbidden
+```
+
+Ожидание: `ConfigError`.
+
+3. **Zone Editor save**
+
+```text
+scene_zones.zone_editor_enabled true in editor runtime
+save
+YAML has zone_editor_enabled: false
+```
+
+4. **Relative alert output dir**
+
+Если поменять путь на relative, тестировать resolution.
+
+---
+
+## Tracker tests
+
+1. **Detector skipped, OpenCV tracker updates bbox**
+
+Через fake `FrameTrackerWrapper`.
+
+2. **Detector refresh after max tracker-only frames**
+
+Проверить `should_run_detector()`.
+
+3. **Public state API**
+
+Если заменить private calls из `DetectThenTrackManager` к `MultiCatTracker`, тестом закрепить behavior.
+
+# 7. Что нельзя трогать без тестов
+
+1. `SurfaceMonitor._is_alert_eligible_track()` и вся логика `_maybe_build_surface_event()` / `_handle_surface_event()`
+   Это напрямую влияет на реальные алерты.
+
+2. `SceneZoneClassifier.classify_point()` / `_zone_type_rank()`
+   Это safety-critical priority зон. Сейчас priority documented и должен быть стабильным.
+
+3. `MultiCatTracker._handle_unmatched_track()`
+   Там lifecycle `CONFIRMED -> HELD -> LOST -> REMOVED`; любое изменение может сломать reacquire и alert stability.
+
+4. `ZoneEditor._save_zones()`
+   Сейчас он явно сохраняет normalized zones и отключает editor mode. Это уже исправленная зона риска.
+
+5. Coordinate conversion в `zones.py`
+   Нельзя менять без normalized/pixels tests.
+
+6. `AlertRecorder` integration в `main.py`
+   Файл не прислан, но по main видно, что recording зависит от `active_alert_tracks` и overlay state. Любое изменение surface events может повлиять на записи.
+
+# 8. Что даст максимальный эффект быстро
+
+## Максимальная стабильность
+
+1. Исправить `SurfaceMonitor` так, чтобы zone state не зависел от свежего YOLO detection.
+2. Разделить emitted/suppressed events.
+3. Добавить entry hysteresis.
+4. Добавить sequence regression tests.
+5. Добавить source/performance diagnostics.
+
+## Максимальная CPU-производительность
+
+1. Stage timing telemetry — сначала измерить.
+2. Для tracker-only modes сделать KCF первым backend или configurable backend.
+3. Увеличить `detector_interval_while_tracking` там, где это безопасно.
+4. Настроить `imgsz` и resize по фактическому FPS.
+5. Убрать per-frame INFO logs.
+6. Позже — latest-frame source для iPhone/MJPEG и ESP32 snapshot, чтобы не обрабатывать старые кадры.
+
+## Что сейчас вероятнее всего мешает “швейцарским часам”
+
+Главный кандидат — **разрыв между tracker-only pipeline и alert/zone pipeline**: tracker может продолжать вести bbox, но `SurfaceMonitor` перестаёт классифицировать зону, если YOLO detection не свежий. Это создаёт нестабильность именно в тех режимах, где CPU-only оптимизация должна полагаться на tracker между detector refresh-ами.
+
+Второй кандидат — отсутствие stage timing/source metadata: без этого трудно понять, где лаг — YOLO, камера, decode, overlay или recorder.
+
+Третий — alert event semantics: suppressed event сейчас может выглядеть как обычный event.
+
+# 9. Итоговая рекомендация
+
+Архитектура проекта **не требует переписывания**. Она уже имеет нормальные границы: `detector`, `tracker`, `zones`, `surface_monitor`, `overlay`, `config`, `zone_editor`. Главная задача — не “сделать красиво”, а стабилизировать стыки:
+
+```text
+tracker -> zone state -> alert decision -> recorder/audio/overlay
+```
+
+Я бы делал первый безопасный refactor в таком порядке:
+
+1. Tests для `SurfaceMonitor` tracker-only behavior.
+2. Fix eligibility/classification policy.
+3. Tests для emitted/suppressed events.
+4. Разделить emitted/suppressed.
+5. Добавить stage timing.
+6. Добавить `_coerce_bool`.
+7. Добавить entry hysteresis.
+8. Потом уже tracker backend config и source metadata.
+
+Это даст лучший баланс риск/польза для живого CPU-only проекта.

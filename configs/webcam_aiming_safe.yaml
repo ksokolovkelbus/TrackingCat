@@ -14,7 +14,7 @@ source:
   snapshot_use_cache_bust: true
 
 detector:
-  model_path: yolo26s.pt
+  model_path: yolo26n.pt
   imgsz: 640
   confidence_threshold: 0.18
   iou_threshold: 0.45
@@ -98,34 +98,35 @@ logging:
 tracking:
   tracking_enabled: true
   multi_target_enabled: true
-  tracker_only_mode_after_confirm: false
-  detector_interval_while_tracking: 1
-  reacquire_after_failed_tracker_frames: 1
-  max_tracker_only_frames_without_detection: 4
+  tracker_only_mode_after_confirm: true
+  detector_interval_while_tracking: 4
+  reacquire_after_failed_tracker_frames: 2
+  max_tracker_only_frames_without_detection: 8
   acquire_confidence_threshold: 0.18
   keep_confidence_threshold: 0.06
   confirm_frames: 1
   reconfirm_frames: 1
-  hold_without_detection_frames: 10
+  hold_without_detection_frames: 4
   lost_transition_frames: 5
-  max_missing_frames: 16
-  hard_remove_frames: 24
-  reacquire_max_frames: 10
+  max_missing_frames: 10
+  hard_remove_frames: 12
+  reacquire_max_frames: 5
   iou_gate: 0.12
-  center_distance_gate: 180
+  center_distance_gate: 160
   min_area_ratio: 0.20
   max_area_ratio: 4.0
   soft_iou_gate: 0.03
-  soft_center_distance_gate: 220
+  soft_center_distance_gate: 180
   soft_min_area_ratio: 0.15
   soft_max_area_ratio: 5.0
-  smoothing_alpha: 0.85
+  smoothing_alpha: 0.55
   preserve_confirmed_tracks: true
   never_drop_confirmed_on_single_bad_frame: true
   keep_lost_tracks: true
-  max_active_tracks: 32
-  use_motion_prediction: true
+  max_active_tracks: 16
+  use_motion_prediction: false
   display_sort_mode: top_to_bottom_left_to_right
+  frame_tracker_backend: KCF
 
 scene_zones:
   enabled: true
@@ -183,8 +184,9 @@ surface_alert:
   enabled: true
   trigger_on_surface_entry: true
   alert_point_mode: crosshair_center
-  trigger_only_from_floor: false
-  trigger_from_unknown: true
+  trigger_only_from_floor: true
+  trigger_from_unknown: false
+  min_floor_frames_before_alert: 4
   cooldown_seconds: 2.0
   min_interval_per_track: 5.0
   global_min_interval: 1.0

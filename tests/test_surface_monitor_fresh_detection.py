@@ -29,7 +29,7 @@ def _make_track(*, track_id: int, frame_index: int, last_detection_frame: int, s
     )
 
 
-def test_stale_tracker_only_track_does_not_trigger_surface_alert() -> None:
+def test_stale_tracker_only_track_still_triggers_surface_alert() -> None:
     zone = SceneZone(name='restricted_1', enabled=True, zone_type=ZoneType.RESTRICTED, shape_type='rect', coordinates_mode='pixels', x1=0, y1=0, x2=100, y2=100)
     classifier = SceneZoneClassifier(SceneZonesConfig(enabled=True, zones=[zone]))
     monitor = SurfaceMonitor(classifier=classifier, config=SurfaceAlertConfig(enabled=True, trigger_from_unknown=True), logger=logging.getLogger('test_surface'))
@@ -37,8 +37,9 @@ def test_stale_tracker_only_track_does_not_trigger_surface_alert() -> None:
     stale_track = _make_track(track_id=1, frame_index=10, last_detection_frame=7)
     result = monitor.update([stale_track], frame_shape=(120, 160, 3), frame_index=10, timestamp=1000.0)
 
-    assert result.surface_events == []
-    assert result.active_alert_tracks == []
+    assert len(result.surface_events) == 1
+    assert result.surface_events[0].zone_name == 'restricted_1'
+    assert len(result.active_alert_tracks) == 1
 
 
 def test_fresh_confirmed_track_can_trigger_surface_alert() -> None:

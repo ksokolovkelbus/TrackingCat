@@ -125,14 +125,16 @@ class VideoSource:
     def _attempt_reconnect(self) -> bool:
         for attempt in range(1, self._config.max_reconnect_attempts + 1):
             self.status = "reconnecting"
+            delay_seconds = self._reconnect_delay_for_attempt(attempt)
             self._logger.warning(
-                "Reconnect attempt %d/%d for source '%s'.",
+                "Reconnect attempt %d/%d for source '%s' after %.2fs backoff.",
                 attempt,
                 self._config.max_reconnect_attempts,
                 self._safe_source_repr(),
+                delay_seconds,
             )
             self.release()
-            time.sleep(self._config.reconnect_delay_seconds)
+            time.sleep(delay_seconds)
             try:
                 self.open()
                 return True
@@ -140,6 +142,12 @@ class VideoSource:
                 continue
         self.status = "disconnected"
         return False
+
+    def _reconnect_delay_for_attempt(self, attempt: int) -> float:
+        base_delay = max(0.0, self._config.reconnect_delay_seconds)
+        if attempt <= 1 or base_delay == 0.0:
+            return base_delay
+        return min(base_delay * (2 ** (attempt - 1)), 5.0)
 
     def _safe_source_repr(self) -> str:
         if self._config.source_type == "webcam":
