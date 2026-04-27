@@ -28,7 +28,7 @@ pan_tilt:
   enabled: true
   manual_control_only: true
   base_url: http://192.168.8.140
-  request_timeout_seconds: 0.8
+  request_timeout_seconds: 1.2
   status_poll_interval_seconds: 2.0
   default_step_degrees: 2
   coarse_step_degrees: 6
@@ -66,6 +66,9 @@ pan_tilt:
   laser_value_min: 150
   laser_red_min: 170
   laser_red_delta: 70
+  laser_peak_min_value: 245
+  laser_peak_threshold_ratio: 0.82
+  laser_peak_window_radius_px: 18
   laser_min_area_px: 3
   laser_max_area_px: 400
 

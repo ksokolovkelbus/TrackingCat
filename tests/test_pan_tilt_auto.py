@@ -58,3 +58,16 @@ def test_detector_prefers_compact_spot() -> None:
     assert detection is not None
     assert abs(detection.center[0] - 153) <= 6
     assert abs(detection.center[1] - 93) <= 6
+
+
+def test_detector_uses_bright_core_not_halo() -> None:
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    # red halo / ambient glow
+    frame[80:150, 120:210] = (30, 30, 180)
+    # true laser core
+    frame[108:112, 168:172] = (0, 0, 255)
+    detector = LaserDotDetector(PanTiltControlConfig(enabled=True))
+    detection = detector.detect(frame)
+    assert detection is not None
+    assert abs(detection.center[0] - 170) <= 5
+    assert abs(detection.center[1] - 110) <= 5

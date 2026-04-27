@@ -552,7 +552,7 @@ class PanTiltControlConfig:
     enabled: bool = False
     manual_control_only: bool = True
     base_url: str = "http://trackingcat-pantilt.local"
-    request_timeout_seconds: float = 0.8
+    request_timeout_seconds: float = 1.2
     status_poll_interval_seconds: float = 2.0
     default_step_degrees: int = 3
     coarse_step_degrees: int = 8
@@ -590,6 +590,9 @@ class PanTiltControlConfig:
     laser_value_min: int = 150
     laser_red_min: int = 170
     laser_red_delta: int = 70
+    laser_peak_min_value: int = 245
+    laser_peak_threshold_ratio: float = 0.82
+    laser_peak_window_radius_px: int = 18
     laser_min_area_px: float = 3.0
     laser_max_area_px: float = 400.0
 

@@ -79,7 +79,7 @@ class LaserDotDetector:
                 dist = _distance(candidate.center, expected_center)
                 if max_distance_px is not None and dist > max_distance_px:
                     continue
-                score -= dist * 0.035
+                score -= dist * 0.03
             if reference is not None:
                 radius_delta = abs(candidate.radius_px - reference.radius_px) / max(reference.radius_px, 1.0)
                 area_delta = abs(candidate.area_px - reference.area_px) / max(reference.area_px, 1.0)
@@ -95,57 +95,103 @@ class LaserDotDetector:
     def detect_candidates(self, frame: np.ndarray | None) -> list[LaserDotDetection]:
         if frame is None or frame.size == 0:
             return []
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower1 = np.array([0, self._config.laser_saturation_min, self._config.laser_value_min], dtype=np.uint8)
-        upper1 = np.array([12, 255, 255], dtype=np.uint8)
-        lower2 = np.array([168, self._config.laser_saturation_min, self._config.laser_value_min], dtype=np.uint8)
-        upper2 = np.array([179, 255, 255], dtype=np.uint8)
-        hsv_mask = cv2.inRange(hsv, lower1, upper1) | cv2.inRange(hsv, lower2, upper2)
+        h, w = frame.shape[:2]
         b_channel, g_channel, r_channel = cv2.split(frame)
-        red_dominance = cv2.subtract(r_channel, cv2.max(b_channel, g_channel))
-        red_mask = cv2.inRange(r_channel, self._config.laser_red_min, 255)
-        dominance_mask = cv2.inRange(red_dominance, self._config.laser_red_delta, 255)
-        mask = cv2.bitwise_and(hsv_mask, cv2.bitwise_and(red_mask, dominance_mask))
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.GaussianBlur(mask, (5, 5), 0)
-        _, mask = cv2.threshold(mask, 32, 255, cv2.THRESH_BINARY)
+        dominance = cv2.subtract(r_channel, cv2.max(b_channel, g_channel))
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
+        val = hsv[:, :, 2]
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        frame_h, frame_w = frame.shape[:2]
+        base_mask = (
+            (r_channel >= self._config.laser_red_min)
+            & (dominance >= self._config.laser_red_delta)
+            & (sat >= self._config.laser_saturation_min)
+            & (val >= self._config.laser_value_min)
+        )
+        if not np.any(base_mask):
+            return []
+
+        seed_mask = base_mask & (r_channel >= self._config.laser_peak_min_value)
+        if not np.any(seed_mask):
+            return []
+        seed_response = (dominance.astype(np.float32) * 1.4) + (r_channel.astype(np.float32) * 2.2)
+        seed_response[~seed_mask] = 0.0
+        blurred = cv2.GaussianBlur(seed_response, (0, 0), 1.2)
+        _, max_val, _, max_loc = cv2.minMaxLoc(blurred)
+        if max_val <= 0.0:
+            return []
+
+        peak_x, peak_y = max_loc
+        peak_value = int(r_channel[peak_y, peak_x])
+        if peak_value < self._config.laser_peak_min_value:
+            ys, xs = np.where(seed_mask)
+            if xs.size == 0:
+                return []
+            best_index = int(np.argmax(seed_response[ys, xs]))
+            peak_x = int(xs[best_index])
+            peak_y = int(ys[best_index])
+            peak_value = int(r_channel[peak_y, peak_x])
+
+        radius = int(self._config.laser_peak_window_radius_px)
+        x1 = max(0, peak_x - radius)
+        y1 = max(0, peak_y - radius)
+        x2 = min(w, peak_x + radius + 1)
+        y2 = min(h, peak_y + radius + 1)
+        roi_r = r_channel[y1:y2, x1:x2]
+        roi_dom = dominance[y1:y2, x1:x2]
+        roi_sat = sat[y1:y2, x1:x2]
+        roi_val = val[y1:y2, x1:x2]
+
+        peak_threshold = max(self._config.laser_peak_min_value, int(peak_value * self._config.laser_peak_threshold_ratio))
+        roi_mask = (
+            (roi_r >= peak_threshold)
+            & (roi_dom >= self._config.laser_red_delta)
+            & (roi_sat >= self._config.laser_saturation_min)
+            & (roi_val >= self._config.laser_value_min)
+        ).astype(np.uint8) * 255
+        if cv2.countNonZero(roi_mask) == 0:
+            return []
+
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(roi_mask, 8)
         candidates: list[LaserDotDetection] = []
-        for contour in contours:
-            area = float(cv2.contourArea(contour))
-            if area < self._config.laser_min_area_px or area > self._config.laser_max_area_px:
+        for label in range(1, num_labels):
+            area = float(stats[label, cv2.CC_STAT_AREA])
+            if area < 1.0 or area > self._config.laser_max_area_px:
                 continue
-            x, y, w, h = cv2.boundingRect(contour)
-            if w <= 0 or h <= 0:
+            lx = int(stats[label, cv2.CC_STAT_LEFT])
+            ly = int(stats[label, cv2.CC_STAT_TOP])
+            lw = int(stats[label, cv2.CC_STAT_WIDTH])
+            lh = int(stats[label, cv2.CC_STAT_HEIGHT])
+            aspect = max(lw, lh) / max(1.0, min(lw, lh))
+            if aspect > 2.2:
                 continue
-            aspect = max(w, h) / max(1.0, min(w, h))
-            if aspect > 2.4:
+            component_mask = (labels == label).astype(np.uint8)
+            ys, xs = np.where(component_mask > 0)
+            if xs.size == 0:
                 continue
-            (cx, cy), radius = cv2.minEnclosingCircle(contour)
-            if radius <= 0.0:
+            gx = xs + x1
+            gy = ys + y1
+            weights = roi_r[ys, xs].astype(np.float32) + (roi_dom[ys, xs].astype(np.float32) * 1.4)
+            weights_sum = float(weights.sum())
+            if weights_sum <= 0:
                 continue
-            circle_area = np.pi * radius * radius
-            circularity = 0.0 if circle_area <= 0.0 else min(1.0, area / circle_area)
-            if circularity < 0.18:
-                continue
-            roi = frame[y:y + h, x:x + w]
-            if roi.size == 0:
-                continue
-            mean_red = float(roi[:, :, 2].mean())
-            position_penalty = 1.0 - (0.18 * (cy / max(1.0, frame_h)) + 0.06 * (abs(cx - frame_w / 2.0) / max(1.0, frame_w / 2.0)))
-            position_penalty = max(0.55, position_penalty)
-            score = ((area * 0.9) + (circularity * 180.0) + (mean_red * 0.35)) * position_penalty
+            cx = float((gx * weights).sum() / weights_sum)
+            cy = float((gy * weights).sum() / weights_sum)
+            area_contour = float(component_mask.sum())
+            radius_px = float(np.sqrt(area_contour / np.pi))
+            circularity = min(1.0, area_contour / max(np.pi * radius_px * radius_px, 1.0))
+            mean_red = float(roi_r[ys, xs].mean())
+            score = (mean_red * 1.6) + (weights_sum / max(1.0, area_contour) * 0.4) + (circularity * 120.0) - (area_contour * 0.8)
+            if peak_x >= x1 + lx and peak_x < x1 + lx + lw and peak_y >= y1 + ly and peak_y < y1 + ly + lh:
+                score += 180.0
             candidates.append(LaserDotDetection(
                 center=(int(round(cx)), int(round(cy))),
-                radius_px=float(radius),
-                area_px=area,
+                radius_px=max(1.0, radius_px),
+                area_px=area_contour,
                 score=float(score),
                 circularity=float(circularity),
                 mean_red=mean_red,
-                bbox=(x, y, w, h),
+                bbox=(x1 + lx, y1 + ly, lw, lh),
             ))
         candidates.sort(key=lambda item: item.score, reverse=True)
         return candidates
