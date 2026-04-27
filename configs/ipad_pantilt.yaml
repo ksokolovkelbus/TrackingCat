@@ -39,6 +39,26 @@ pan_tilt:
   button_right_direction: up
   hold_repeat_interval_seconds: 0.10
   default_speed_mode: medium
+  calibration_artifact_path: artifacts/pantilt_calibration.json
+  auto_calibration_enabled: true
+  auto_calibration_grid_cols: 5
+  auto_calibration_grid_rows: 5
+  auto_calibration_pan_min_angle: 30
+  auto_calibration_pan_max_angle: 150
+  auto_calibration_tilt_min_angle: 35
+  auto_calibration_tilt_max_angle: 145
+  auto_calibration_settle_seconds: 0.45
+  auto_calibration_detection_timeout_seconds: 1.2
+  auto_calibration_min_samples: 8
+  auto_aim_enabled: false
+  auto_aim_interval_seconds: 0.18
+  auto_aim_only_when_laser_on: true
+  laser_saturation_min: 120
+  laser_value_min: 150
+  laser_red_min: 170
+  laser_red_delta: 70
+  laser_min_area_px: 3
+  laser_max_area_px: 400
 
 overlay:
   minimal_overlay: true

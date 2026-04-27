@@ -19,6 +19,7 @@ from app.detector import DetectorError, YOLODetector
 from app.logger_setup import TrackCoordinateLogger, setup_logging
 from app.models import AppConfig, Detection, FrameTrackingSummary, StageTimings, TrackingPipelineState
 from app.pan_tilt import PanTiltController, PanTiltControlOverlay
+from app.pan_tilt_auto import PanTiltCalibrator
 from app.overlay import OverlayRenderer
 from app.surface_monitor import SurfaceMonitor
 from app.target_selector import TargetSelector
@@ -315,6 +316,13 @@ def main() -> int:
     shutdown_event = Event()
     window_enabled = _initialize_window(config, logger)
     last_summary: FrameTrackingSummary | None = None
+    pan_tilt_controller = PanTiltController(config=config.pan_tilt, logger=logger) if config.pan_tilt.enabled else None
+    pan_tilt_calibrator = PanTiltCalibrator(config=config.pan_tilt, controller=pan_tilt_controller, logger=logger) if pan_tilt_controller is not None else None
+    last_auto_aim_ts = 0.0
+    if pan_tilt_calibrator is not None:
+        loaded = pan_tilt_calibrator.load()
+        pan_tilt_controller.state.calibration_loaded = loaded is not None
+        pan_tilt_controller.state.calibration_samples = len(loaded.samples) if loaded is not None else 0
 
     def _handle_shutdown(signum: int, _frame: object) -> None:
         logger.info("Signal %d received. Shutting down.", signum)
@@ -406,6 +414,22 @@ def main() -> int:
             detect_or_track_ms = (time.perf_counter() - detect_or_track_started) * 1000.0
 
             last_summary = summary
+            if pan_tilt_calibrator is not None and config.pan_tilt.auto_aim_enabled:
+                aim_point: tuple[float, float] | None = None
+                if summary.visible_tracks:
+                    track = summary.visible_tracks[0]
+                    aim_point = (track.center_x, track.center_y)
+                elif summary.detection_overlays:
+                    detection = summary.detection_overlays[0]
+                    aim_point = (detection.center_x, detection.center_y)
+                if aim_point is not None and (timestamp - last_auto_aim_ts) >= config.pan_tilt.auto_aim_interval_seconds:
+                    if (not config.pan_tilt.auto_aim_only_when_laser_on) or pan_tilt_controller.state.laser_on:
+                        try:
+                            pan_tilt_controller.maybe_refresh_state()
+                            pan_tilt_calibrator.aim_at_pixel(aim_point[0], aim_point[1])
+                            last_auto_aim_ts = timestamp
+                        except Exception:
+                            logger.exception("PanTilt auto-aim update failed.")
             surface_monitor_started = time.perf_counter()
             _apply_surface_monitoring(
                 summary=summary,
@@ -539,6 +563,7 @@ def main() -> int:
 def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
     source = VideoSource(config=config.source, logger=logger)
     controller = PanTiltController(config=config.pan_tilt, logger=logger)
+    calibrator = PanTiltCalibrator(config=config.pan_tilt, controller=controller, logger=logger)
     ui = PanTiltControlOverlay(config=config.pan_tilt)
     fps_meter = FPSMeter()
     shutdown_event = Event()
@@ -546,13 +571,35 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
     latest_buttons = []
     held_action: str | None = None
     last_hold_command_ts = 0.0
+    pending_special_action: str | None = None
+    calibration_notice: str | None = None
+    calibration_notice_until = 0.0
+
+    def _set_notice(message: str, seconds: float = 4.0) -> None:
+        nonlocal calibration_notice, calibration_notice_until
+        calibration_notice = message
+        calibration_notice_until = time.monotonic() + seconds
+
+    def _fetch_calibration_frame() -> np.ndarray | None:
+        deadline = time.monotonic() + max(1.0, config.pan_tilt.auto_calibration_detection_timeout_seconds)
+        while time.monotonic() < deadline and not shutdown_event.is_set():
+            ok, frame = source.read()
+            if not ok:
+                if source.status == "ended":
+                    return None
+                time.sleep(0.02)
+                continue
+            if frame is None or frame.size == 0:
+                continue
+            return _maybe_resize_frame(frame, config)
+        return None
 
     def _handle_shutdown(signum: int, _frame: object) -> None:
         logger.info("Signal %d received. Shutting down.", signum)
         shutdown_event.set()
 
     def _mouse_callback(event: int, x: int, y: int, _flags: int, _param: object) -> None:
-        nonlocal latest_buttons, held_action, last_hold_command_ts
+        nonlocal latest_buttons, held_action, last_hold_command_ts, pending_special_action
         button = ui.find_button(latest_buttons, x, y)
         if event == cv2.EVENT_LBUTTONDOWN:
             if button is None:
@@ -563,6 +610,8 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
                     held_action = button.action
                     controller.start_continuous_move(button.action)
                     last_hold_command_ts = time.monotonic()
+                elif button.action == "auto-calibrate":
+                    pending_special_action = button.action
                 else:
                     controller.execute_action(button.action)
             except Exception:
@@ -591,6 +640,9 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
     try:
         source.open()
         controller.maybe_refresh_state(force=True)
+        loaded = calibrator.load()
+        controller.state.calibration_loaded = loaded is not None
+        controller.state.calibration_samples = len(loaded.samples) if loaded is not None else 0
         if window_enabled:
             cv2.setMouseCallback(config.output.window_name, _mouse_callback)
         while not shutdown_event.is_set():
@@ -607,8 +659,35 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
             frame = _maybe_resize_frame(frame, config)
             fps = fps_meter.update()
             controller.maybe_refresh_state()
+
+            if pending_special_action == "auto-calibrate":
+                controller.state.calibrating = True
+                pending_special_action = None
+                _set_notice("AUTO CAL started...", seconds=2.0)
+                try:
+                    data = calibrator.calibrate(fetch_frame=_fetch_calibration_frame)
+                    controller.state.calibration_loaded = True
+                    controller.state.calibration_samples = len(data.samples)
+                    _set_notice(f"AUTO CAL ready: {len(data.samples)} pts, fit {data.fit_error_degrees:.1f} deg", seconds=8.0)
+                except Exception as exc:
+                    controller.state.last_error = str(exc)
+                    _set_notice(f"AUTO CAL failed: {exc}", seconds=8.0)
+                    logger.exception("PanTilt auto calibration failed.")
+                finally:
+                    controller.state.calibrating = False
+                    controller.maybe_refresh_state(force=True)
+
+            laser_detection = calibrator.detector.detect(frame) if controller.state.laser_on else None
+            notice = calibration_notice if time.monotonic() <= calibration_notice_until else None
             if config.pan_tilt.show_controls:
-                latest_buttons = ui.draw(frame=frame, state=controller.state, fps=fps, source_status=source.status)
+                latest_buttons = ui.draw(
+                    frame=frame,
+                    state=controller.state,
+                    fps=fps,
+                    source_status=source.status,
+                    calibration_notice=notice,
+                    laser_detection=(laser_detection.center[0], laser_detection.center[1], int(round(laser_detection.radius_px))) if laser_detection is not None else None,
+                )
             if window_enabled:
                 try:
                     cv2.imshow(config.output.window_name, frame)
@@ -639,6 +718,8 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
                         controller.center()
                     elif key == ord("r"):
                         controller.maybe_refresh_state(force=True)
+                    elif key == ord("k"):
+                        pending_special_action = "auto-calibrate"
         return 0
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")

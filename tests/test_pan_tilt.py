@@ -7,6 +7,7 @@ def test_pantilt_default_config_values() -> None:
     assert isinstance(config.pan_tilt, PanTiltControlConfig)
     assert config.pan_tilt.enabled is False
     assert config.pan_tilt.default_step_degrees == 3
+    assert config.pan_tilt.calibration_artifact_path.endswith("pantilt_calibration.json")
 
 
 def test_pantilt_overlay_buttons_cover_expected_actions() -> None:
@@ -14,11 +15,9 @@ def test_pantilt_overlay_buttons_cover_expected_actions() -> None:
     state = PanTiltState(step_degrees=3, connected=True)
     buttons = overlay.build_buttons((720, 1280, 3), state)
     actions = {button.action for button in buttons}
-    assert {"up", "down", "left", "right", "center", "laser-toggle", "refresh", "stop"}.issubset(actions)
+    assert {"up", "down", "left", "right", "center", "laser-toggle", "refresh", "stop", "auto-calibrate"}.issubset(actions)
     active_speed = [button for button in buttons if button.action == "speed:medium"]
     assert active_speed and active_speed[0].toggled is True
-
-
 
 
 def test_explicit_button_mapping() -> None:

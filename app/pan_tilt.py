@@ -27,6 +27,10 @@ class PanTiltState:
     last_command: str = "idle"
     last_error: str | None = None
     last_updated_ts: float = 0.0
+    calibration_loaded: bool = False
+    calibration_samples: int = 0
+    calibrating: bool = False
+    auto_aim_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +50,7 @@ class PanTiltController:
     def __init__(self, config: PanTiltControlConfig, logger: logging.Logger) -> None:
         self._config = config
         self._logger = logger
-        self._state = PanTiltState(step_degrees=config.default_step_degrees)
+        self._state = PanTiltState(step_degrees=config.default_step_degrees, auto_aim_enabled=config.auto_aim_enabled)
         self._last_poll_monotonic = 0.0
 
     @property
@@ -61,7 +65,6 @@ class PanTiltController:
             "right": self._config.button_right_direction,
         }
         return button_to_direction[direction]
-
 
     def maybe_refresh_state(self, force: bool = False) -> PanTiltState:
         now = time.monotonic()
@@ -118,6 +121,11 @@ class PanTiltController:
         self._merge_state(payload, fallback_command="laser-toggle")
         return self._state
 
+    def set_laser(self, enabled: bool) -> PanTiltState:
+        payload = self._request_json("/api/laser", {"on": 1 if enabled else 0})
+        self._merge_state(payload, fallback_command="laser-set")
+        return self._state
+
     def set_step(self, step_degrees: int) -> PanTiltState:
         payload = self._request_json("/api/step", {"degrees": int(step_degrees)})
         self._merge_state(payload, fallback_command=f"step:{step_degrees}")
@@ -126,6 +134,11 @@ class PanTiltController:
     def set_speed_mode(self, mode: str) -> PanTiltState:
         payload = self._request_json("/api/speed", {"mode": mode})
         self._merge_state(payload, fallback_command=f"speed:{mode}")
+        return self._state
+
+    def target_angles(self, pan_angle: int, tilt_angle: int) -> PanTiltState:
+        payload = self._request_json("/api/target", {"pan": int(pan_angle), "tilt": int(tilt_angle)})
+        self._merge_state(payload, fallback_command=f"target:{pan_angle}:{tilt_angle}")
         return self._state
 
     def execute_action(self, action: str) -> PanTiltState:
@@ -193,18 +206,8 @@ class PanTiltControlOverlay:
         base_y = height - (size * 3 + gap * 4)
         step_buttons = [
             ControlButton("speed:slow", "SLOW", (base_x, base_y - size - gap, base_x + size, base_y), toggled=state.speed_mode == "slow"),
-            ControlButton(
-                "speed:medium",
-                "MED",
-                (base_x + size + gap, base_y - size - gap, base_x + size * 2 + gap, base_y),
-                toggled=state.speed_mode == "medium",
-            ),
-            ControlButton(
-                "speed:fast",
-                "FAST",
-                (base_x + (size + gap) * 2, base_y - size - gap, base_x + size * 3 + gap * 2, base_y),
-                toggled=state.speed_mode == "fast",
-            ),
+            ControlButton("speed:medium", "MED", (base_x + size + gap, base_y - size - gap, base_x + size * 2 + gap, base_y), toggled=state.speed_mode == "medium"),
+            ControlButton("speed:fast", "FAST", (base_x + (size + gap) * 2, base_y - size - gap, base_x + size * 3 + gap * 2, base_y), toggled=state.speed_mode == "fast"),
         ]
         dpad = [
             ControlButton("up", "UP", (base_x + size + gap, base_y, base_x + size * 2 + gap, base_y + size), accent=True),
@@ -215,14 +218,19 @@ class PanTiltControlOverlay:
         ]
         aux = [
             ControlButton("laser-toggle", "LASER", (24, height - 96, 180, height - 36), accent=state.laser_on, toggled=state.laser_on),
-            ControlButton("refresh", "REFRESH", (196, height - 96, 352, height - 36)),
-            ControlButton("stop", "STOP", (368, height - 96, 524, height - 36), accent=True),
+            ControlButton("auto-calibrate", "AUTO CAL", (196, height - 96, 392, height - 36), accent=state.calibrating, toggled=state.calibrating),
+            ControlButton("refresh", "REFRESH", (408, height - 96, 564, height - 36)),
+            ControlButton("stop", "STOP", (580, height - 96, 736, height - 36), accent=True),
         ]
         return step_buttons + dpad + aux
 
-    def draw(self, frame: np.ndarray, state: PanTiltState, fps: float, source_status: str) -> list[ControlButton]:
+    def draw(self, frame: np.ndarray, state: PanTiltState, fps: float, source_status: str, calibration_notice: str | None = None, laser_detection: tuple[int, int, int] | None = None) -> list[ControlButton]:
         buttons = self.build_buttons(frame.shape, state)
         self._draw_header(frame, state=state, fps=fps, source_status=source_status)
+        if laser_detection is not None:
+            self._draw_laser_detection(frame, laser_detection)
+        if calibration_notice:
+            self._draw_footer_notice(frame, calibration_notice, color=(80, 220, 120))
         for button in buttons:
             self._draw_button(frame, button)
         return buttons
@@ -234,12 +242,15 @@ class PanTiltControlOverlay:
         return None
 
     def _draw_header(self, frame: np.ndarray, state: PanTiltState, fps: float, source_status: str) -> None:
+        cal_text = f"cal: {'READY' if state.calibration_loaded else 'NO'} ({state.calibration_samples} pts)"
+        if state.calibrating:
+            cal_text = "cal: RUNNING"
         lines = [
             "iPad PanTilt manual mode",
             f"source: {source_status} | fps: {fps:.1f}",
             f"pan: {state.pan_angle} deg | tilt: {state.tilt_angle} deg | speed: {state.speed_mode.upper()} | laser: {'ON' if state.laser_on else 'OFF'}",
             f"controller: {'connected' if state.connected else 'offline'} | net: {state.wifi_mode or '-'} | ip: {state.ip_address or '-'}",
-            "hold mouse on arrows = continuous move | keys: WASD 1/3/8 L C R Q",
+            f"{cal_text} | keys: WASD L C R K Q",
         ]
         x = 16
         y = 24
@@ -265,6 +276,11 @@ class PanTiltControlOverlay:
         cv2.rectangle(frame, (x - 8, y - text_size[1] - 8), (x + text_size[0] + 8, y + baseline + 4), (16, 16, 16), thickness=-1)
         cv2.putText(frame, text, (x, y), self._font, 0.58, color, 1, cv2.LINE_AA)
 
+    def _draw_laser_detection(self, frame: np.ndarray, detection: tuple[int, int, int]) -> None:
+        cx, cy, radius = detection
+        cv2.circle(frame, (cx, cy), max(radius, 6), (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.drawMarker(frame, (cx, cy), (0, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=20, thickness=2)
+
     def _draw_button(self, frame: np.ndarray, button: ControlButton) -> None:
         left, top, right, bottom = button.rect
         fill = (30, 30, 30)
@@ -277,7 +293,8 @@ class PanTiltControlOverlay:
             border = (80, 220, 120) if button.action.startswith("step:") else (0, 180, 255)
         cv2.rectangle(frame, (left, top), (right, bottom), fill, thickness=-1)
         cv2.rectangle(frame, (left, top), (right, bottom), border, thickness=2)
-        text_size, baseline = cv2.getTextSize(button.label, self._font, 0.9, 2)
+        font_scale = 0.66 if len(button.label) > 7 else 0.9
+        text_size, baseline = cv2.getTextSize(button.label, self._font, font_scale, 2)
         text_x = left + ((right - left) - text_size[0]) // 2
         text_y = top + ((bottom - top) + text_size[1]) // 2
-        cv2.putText(frame, button.label, (text_x, text_y), self._font, 0.9, text_color, 2, cv2.LINE_AA)
+        cv2.putText(frame, button.label, (text_x, text_y), self._font, font_scale, text_color, 2, cv2.LINE_AA)

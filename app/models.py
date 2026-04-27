@@ -563,6 +563,26 @@ class PanTiltControlConfig:
     button_right_direction: str = "up"
     hold_repeat_interval_seconds: float = 0.12
     default_speed_mode: str = "medium"
+    calibration_artifact_path: str = "artifacts/pantilt_calibration.json"
+    auto_calibration_enabled: bool = True
+    auto_calibration_grid_cols: int = 5
+    auto_calibration_grid_rows: int = 5
+    auto_calibration_pan_min_angle: float = 30.0
+    auto_calibration_pan_max_angle: float = 150.0
+    auto_calibration_tilt_min_angle: float = 35.0
+    auto_calibration_tilt_max_angle: float = 145.0
+    auto_calibration_settle_seconds: float = 0.45
+    auto_calibration_detection_timeout_seconds: float = 1.2
+    auto_calibration_min_samples: int = 8
+    auto_aim_enabled: bool = False
+    auto_aim_interval_seconds: float = 0.18
+    auto_aim_only_when_laser_on: bool = True
+    laser_saturation_min: int = 120
+    laser_value_min: int = 150
+    laser_red_min: int = 170
+    laser_red_delta: int = 70
+    laser_min_area_px: float = 3.0
+    laser_max_area_px: float = 400.0
 
 
 @dataclass(slots=True)
