@@ -47,3 +47,14 @@ def test_calibrator_builds_local_targets() -> None:
     grid = cal._build_local_targets(90.0, 90.0)
     assert len(grid) == 9
     assert (90.0, 90.0) in grid
+
+
+def test_detector_prefers_compact_spot() -> None:
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    frame[200:230, 20:160] = (0, 0, 220)
+    frame[90:96, 150:156] = (0, 0, 255)
+    detector = LaserDotDetector(PanTiltControlConfig(enabled=True))
+    detection = detector.detect(frame)
+    assert detection is not None
+    assert abs(detection.center[0] - 153) <= 6
+    assert abs(detection.center[1] - 93) <= 6

@@ -662,7 +662,7 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
                 try:
                     message = calibrator.tick(frame=frame)
                     controller.state.calibrating = calibrator.progress.running
-                    controller.state.calibration_progress_text = f"cal: {calibrator.progress.sample_index}/{calibrator.progress.total_samples}"
+                    controller.state.calibration_progress_text = f"cal: {calibrator.progress.sample_index}/{calibrator.progress.total_samples} ok:{calibrator.progress.confirmed_frames}/{config.pan_tilt.auto_calibration_confirm_frames}"
                     if message:
                         loaded = calibrator.calibration
                         controller.state.calibration_loaded = loaded is not None

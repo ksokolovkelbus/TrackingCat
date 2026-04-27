@@ -19,6 +19,9 @@ class LaserDotDetection:
     radius_px: float
     area_px: float
     score: float
+    circularity: float
+    mean_red: float
+    bbox: tuple[int, int, int, int]
 
 
 @dataclass(slots=True)
@@ -57,15 +60,41 @@ class CalibrationProgress:
     current_target: tuple[float, float] | None = None
     stage: str = "idle"
     started_at: float = 0.0
+    confirmed_frames: int = 0
 
 
 class LaserDotDetector:
     def __init__(self, config: PanTiltControlConfig) -> None:
         self._config = config
 
-    def detect(self, frame: np.ndarray | None) -> LaserDotDetection | None:
-        if frame is None or frame.size == 0:
+    def detect(self, frame: np.ndarray | None, *, expected_center: tuple[int, int] | None = None, reference: LaserDotDetection | None = None, max_distance_px: float | None = None) -> LaserDotDetection | None:
+        candidates = self.detect_candidates(frame)
+        if not candidates:
             return None
+        best: LaserDotDetection | None = None
+        best_score = float('-inf')
+        for candidate in candidates:
+            score = candidate.score
+            if expected_center is not None:
+                dist = _distance(candidate.center, expected_center)
+                if max_distance_px is not None and dist > max_distance_px:
+                    continue
+                score -= dist * 0.035
+            if reference is not None:
+                radius_delta = abs(candidate.radius_px - reference.radius_px) / max(reference.radius_px, 1.0)
+                area_delta = abs(candidate.area_px - reference.area_px) / max(reference.area_px, 1.0)
+                if radius_delta > self._config.auto_calibration_reference_radius_tolerance:
+                    score -= 120.0 * radius_delta
+                if area_delta > self._config.auto_calibration_reference_area_tolerance:
+                    score -= 90.0 * area_delta
+            if best is None or score > best_score:
+                best = candidate
+                best_score = score
+        return best
+
+    def detect_candidates(self, frame: np.ndarray | None) -> list[LaserDotDetection]:
+        if frame is None or frame.size == 0:
+            return []
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         lower1 = np.array([0, self._config.laser_saturation_min, self._config.laser_value_min], dtype=np.uint8)
         upper1 = np.array([12, 255, 255], dtype=np.uint8)
@@ -81,24 +110,45 @@ class LaserDotDetector:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
         _, mask = cv2.threshold(mask, 32, 255, cv2.THRESH_BINARY)
+
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best: LaserDotDetection | None = None
+        frame_h, frame_w = frame.shape[:2]
+        candidates: list[LaserDotDetection] = []
         for contour in contours:
             area = float(cv2.contourArea(contour))
             if area < self._config.laser_min_area_px or area > self._config.laser_max_area_px:
+                continue
+            x, y, w, h = cv2.boundingRect(contour)
+            if w <= 0 or h <= 0:
+                continue
+            aspect = max(w, h) / max(1.0, min(w, h))
+            if aspect > 2.4:
                 continue
             (cx, cy), radius = cv2.minEnclosingCircle(contour)
             if radius <= 0.0:
                 continue
             circle_area = np.pi * radius * radius
             circularity = 0.0 if circle_area <= 0.0 else min(1.0, area / circle_area)
-            if circularity < 0.15:
+            if circularity < 0.18:
                 continue
-            score = area * (0.6 + circularity)
-            candidate = LaserDotDetection(center=(int(round(cx)), int(round(cy))), radius_px=float(radius), area_px=area, score=score)
-            if best is None or candidate.score > best.score:
-                best = candidate
-        return best
+            roi = frame[y:y + h, x:x + w]
+            if roi.size == 0:
+                continue
+            mean_red = float(roi[:, :, 2].mean())
+            position_penalty = 1.0 - (0.18 * (cy / max(1.0, frame_h)) + 0.06 * (abs(cx - frame_w / 2.0) / max(1.0, frame_w / 2.0)))
+            position_penalty = max(0.55, position_penalty)
+            score = ((area * 0.9) + (circularity * 180.0) + (mean_red * 0.35)) * position_penalty
+            candidates.append(LaserDotDetection(
+                center=(int(round(cx)), int(round(cy))),
+                radius_px=float(radius),
+                area_px=area,
+                score=float(score),
+                circularity=float(circularity),
+                mean_red=mean_red,
+                bbox=(x, y, w, h),
+            ))
+        candidates.sort(key=lambda item: item.score, reverse=True)
+        return candidates
 
 
 class PanTiltCalibrator:
@@ -115,6 +165,9 @@ class PanTiltCalibrator:
         self._original_state: tuple[int, int, str, bool] | None = None
         self._current_target_started_at: float = 0.0
         self._current_target: tuple[float, float] | None = None
+        self._reference_detection: LaserDotDetection | None = None
+        self._last_good_detection: LaserDotDetection | None = None
+        self._stable_detections: list[LaserDotDetection] = []
 
     @property
     def detector(self) -> LaserDotDetector:
@@ -132,39 +185,42 @@ class PanTiltCalibrator:
         path = Path(self._config.calibration_artifact_path)
         if not path.exists():
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding='utf-8'))
         self._calibration = PanTiltCalibrationData(
-            version=int(payload.get("version", 1)),
-            created_at=float(payload.get("created_at", time.time())),
-            frame_width=int(payload["frame_width"]),
-            frame_height=int(payload["frame_height"]),
-            pan_coefficients=[float(v) for v in payload["pan_coefficients"]],
-            tilt_coefficients=[float(v) for v in payload["tilt_coefficients"]],
-            fit_error_degrees=float(payload.get("fit_error_degrees", 0.0)),
-            samples=[PanTiltCalibrationSample(**sample) for sample in payload.get("samples", [])],
+            version=int(payload.get('version', 1)),
+            created_at=float(payload.get('created_at', time.time())),
+            frame_width=int(payload['frame_width']),
+            frame_height=int(payload['frame_height']),
+            pan_coefficients=[float(v) for v in payload['pan_coefficients']],
+            tilt_coefficients=[float(v) for v in payload['tilt_coefficients']],
+            fit_error_degrees=float(payload.get('fit_error_degrees', 0.0)),
+            samples=[PanTiltCalibrationSample(**sample) for sample in payload.get('samples', [])],
         )
         return self._calibration
 
     def start(self, frame: np.ndarray | None) -> str:
         if self._progress.running:
-            return "AUTO CAL already running"
+            return 'AUTO CAL already running'
         detection = self._detector.detect(frame)
         if detection is None:
-            raise RuntimeError("Не вижу красную точку в текущем кадре. Наведи луч в поле зрения камеры и попробуй снова.")
+            raise RuntimeError('Не вижу красную точку в текущем кадре. Наведи луч в поле зрения камеры и попробуй снова.')
         self._controller.maybe_refresh_state(force=True)
         state = self._controller.state
         self._original_state = (state.pan_angle, state.tilt_angle, state.speed_mode, state.laser_on)
         if not state.laser_on:
             self._controller.set_laser(True)
-        if state.speed_mode != "slow":
-            self._controller.set_speed_mode("slow")
+        if state.speed_mode != 'slow':
+            self._controller.set_speed_mode('slow')
         self._samples = []
         self._last_frame_shape = frame.shape[:2]
+        self._reference_detection = detection
+        self._last_good_detection = detection
+        self._stable_detections = []
         self._pending_targets = self._build_local_targets(float(state.pan_angle), float(state.tilt_angle))
-        self._progress = CalibrationProgress(running=True, sample_index=0, total_samples=len(self._pending_targets), stage="moving", started_at=time.monotonic())
+        self._progress = CalibrationProgress(running=True, sample_index=0, total_samples=len(self._pending_targets), stage='moving', started_at=time.monotonic(), confirmed_frames=0)
         self._current_target = None
         self._current_target_started_at = 0.0
-        return f"AUTO CAL started: {len(self._pending_targets)} local points"
+        return f'AUTO CAL started: {len(self._pending_targets)} local points'
 
     def tick(self, frame: np.ndarray | None) -> str | None:
         if not self._progress.running:
@@ -178,39 +234,74 @@ class PanTiltCalibrator:
             self._current_target = self._pending_targets.pop(0)
             self._progress.sample_index += 1
             self._progress.current_target = self._current_target
-            self._progress.stage = "moving"
+            self._progress.stage = 'moving'
+            self._progress.confirmed_frames = 0
+            self._stable_detections = []
             self._controller.target_angles(int(round(self._current_target[0])), int(round(self._current_target[1])))
             self._current_target_started_at = now
-            self._logger.info("Auto calibration sample %d -> pan=%s tilt=%s", self._progress.sample_index, self._current_target[0], self._current_target[1])
+            self._logger.info('Auto calibration sample %d -> pan=%s tilt=%s', self._progress.sample_index, self._current_target[0], self._current_target[1])
             return None
+
         if now - self._current_target_started_at < self._config.auto_calibration_settle_seconds:
             return None
-        self._progress.stage = "detecting"
-        detection = self._detector.detect(frame)
+
+        self._progress.stage = 'confirming'
+        detection = self._detector.detect(
+            frame,
+            expected_center=self._last_good_detection.center if self._last_good_detection is not None else None,
+            reference=self._reference_detection,
+            max_distance_px=self._config.auto_calibration_max_jump_px,
+        )
         if detection is not None:
-            self._samples.append(PanTiltCalibrationSample(
-                pan_angle=float(self._current_target[0]),
-                tilt_angle=float(self._current_target[1]),
-                pixel_x=float(detection.center[0]),
-                pixel_y=float(detection.center[1]),
-                radius_px=float(detection.radius_px),
-                area_px=float(detection.area_px),
-            ))
+            if self._stable_detections and _distance(detection.center, self._stable_detections[-1].center) > 80.0:
+                self._stable_detections = [detection]
+                self._progress.confirmed_frames = 1
+            else:
+                self._stable_detections.append(detection)
+                self._progress.confirmed_frames += 1
+        else:
+            self._stable_detections.clear()
+            self._progress.confirmed_frames = 0
+
+        if self._progress.confirmed_frames < self._config.auto_calibration_confirm_frames:
+            if now - self._current_target_started_at < self._config.auto_calibration_detection_timeout_seconds:
+                return None
+            self._logger.warning('Laser dot confirmation failed at pan=%s tilt=%s', self._current_target[0], self._current_target[1])
+            self._current_target = None
+            self._progress.current_target = None
+            self._progress.stage = 'sampling'
+            self._stable_detections.clear()
+            self._progress.confirmed_frames = 0
+            return None
+
+        accepted = _median_detection(self._stable_detections)
+        self._samples.append(PanTiltCalibrationSample(
+            pan_angle=float(self._current_target[0]),
+            tilt_angle=float(self._current_target[1]),
+            pixel_x=float(accepted.center[0]),
+            pixel_y=float(accepted.center[1]),
+            radius_px=float(accepted.radius_px),
+            area_px=float(accepted.area_px),
+        ))
+        self._last_good_detection = accepted
         self._current_target = None
         self._progress.current_target = None
-        self._progress.stage = "sampling"
+        self._progress.stage = 'sampling'
+        self._stable_detections.clear()
+        self._progress.confirmed_frames = 0
         return None
 
     def stop(self) -> None:
         self._progress = CalibrationProgress()
         self._pending_targets = []
         self._current_target = None
+        self._stable_detections = []
         self._restore_original_state()
 
     def aim_at_pixel(self, x: float, y: float) -> tuple[float, float]:
         calibration = self._calibration or self.load()
         if calibration is None:
-            raise RuntimeError("PanTilt calibration is not loaded.")
+            raise RuntimeError('PanTilt calibration is not loaded.')
         pan_angle, tilt_angle = calibration.pixel_to_angles(x, y)
         self._controller.target_angles(int(round(pan_angle)), int(round(tilt_angle)))
         return pan_angle, tilt_angle
@@ -239,18 +330,22 @@ class PanTiltCalibrator:
         if len(self._samples) < minimum:
             self._restore_original_state()
             self._progress = CalibrationProgress()
-            raise RuntimeError(f"Calibration collected only {len(self._samples)} usable samples; need at least {minimum}.")
+            raise RuntimeError(f'Calibration collected only {len(self._samples)} usable samples; need at least {minimum}.')
         if self._last_frame_shape is None:
             self._restore_original_state()
             self._progress = CalibrationProgress()
-            raise RuntimeError("Calibration finished without frame shape.")
+            raise RuntimeError('Calibration finished without frame shape.')
         h, w = self._last_frame_shape
         data = self._fit(samples=self._samples, frame_width=w, frame_height=h)
+        if data.fit_error_degrees > self._config.auto_calibration_max_fit_error_degrees:
+            self._restore_original_state()
+            self._progress = CalibrationProgress()
+            raise RuntimeError(f'Calibration fit too noisy: {data.fit_error_degrees:.1f} deg (need <= {self._config.auto_calibration_max_fit_error_degrees:.1f}).')
         self._calibration = data
         self._save(data)
         self._restore_original_state()
         self._progress = CalibrationProgress()
-        return f"AUTO CAL ready: {len(data.samples)} pts, fit {data.fit_error_degrees:.1f} deg"
+        return f'AUTO CAL ready: {len(data.samples)} pts, fit {data.fit_error_degrees:.1f} deg'
 
     def _restore_original_state(self) -> None:
         if self._original_state is None:
@@ -261,7 +356,7 @@ class PanTiltCalibrator:
             self._controller.set_speed_mode(speed)
             self._controller.set_laser(laser_on)
         except Exception:
-            self._logger.warning("Failed to restore original state after calibration.", exc_info=True)
+            self._logger.warning('Failed to restore original state after calibration.', exc_info=True)
         finally:
             self._original_state = None
 
@@ -289,16 +384,16 @@ class PanTiltCalibrator:
         path = Path(self._config.calibration_artifact_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": data.version,
-            "created_at": data.created_at,
-            "frame_width": data.frame_width,
-            "frame_height": data.frame_height,
-            "pan_coefficients": data.pan_coefficients,
-            "tilt_coefficients": data.tilt_coefficients,
-            "fit_error_degrees": data.fit_error_degrees,
-            "samples": [asdict(sample) for sample in data.samples],
+            'version': data.version,
+            'created_at': data.created_at,
+            'frame_width': data.frame_width,
+            'frame_height': data.frame_height,
+            'pan_coefficients': data.pan_coefficients,
+            'tilt_coefficients': data.tilt_coefficients,
+            'fit_error_degrees': data.fit_error_degrees,
+            'samples': [asdict(sample) for sample in data.samples],
         }
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
 def _feature_vector(x: float, y: float, frame_width: int, frame_height: int) -> np.ndarray:
@@ -307,3 +402,28 @@ def _feature_vector(x: float, y: float, frame_width: int, frame_height: int) -> 
     nx = (float(x) / width) - 0.5
     ny = (float(y) / height) - 0.5
     return np.array([nx, ny, nx * ny, nx * nx, ny * ny, 1.0], dtype=np.float64)
+
+
+def _distance(a: tuple[int, int], b: tuple[int, int]) -> float:
+    return float(((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5)
+
+
+def _median_detection(detections: list[LaserDotDetection]) -> LaserDotDetection:
+    centers_x = sorted(item.center[0] for item in detections)
+    centers_y = sorted(item.center[1] for item in detections)
+    radii = sorted(item.radius_px for item in detections)
+    areas = sorted(item.area_px for item in detections)
+    scores = sorted(item.score for item in detections)
+    circularities = sorted(item.circularity for item in detections)
+    reds = sorted(item.mean_red for item in detections)
+    mid = len(detections) // 2
+    base = detections[mid]
+    return LaserDotDetection(
+        center=(int(centers_x[mid]), int(centers_y[mid])),
+        radius_px=float(radii[mid]),
+        area_px=float(areas[mid]),
+        score=float(scores[mid]),
+        circularity=float(circularities[mid]),
+        mean_red=float(reds[mid]),
+        bbox=base.bbox,
+    )
