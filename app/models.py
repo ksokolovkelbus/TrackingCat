@@ -548,6 +548,24 @@ class ResizeConfig:
 
 
 @dataclass(slots=True)
+class PanTiltControlConfig:
+    enabled: bool = False
+    manual_control_only: bool = True
+    base_url: str = "http://trackingcat-pantilt.local"
+    request_timeout_seconds: float = 0.8
+    status_poll_interval_seconds: float = 2.0
+    default_step_degrees: int = 3
+    coarse_step_degrees: int = 8
+    show_controls: bool = True
+    button_up_direction: str = "left"
+    button_down_direction: str = "right"
+    button_left_direction: str = "down"
+    button_right_direction: str = "up"
+    hold_repeat_interval_seconds: float = 0.12
+    default_speed_mode: str = "medium"
+
+
+@dataclass(slots=True)
 class OutputConfig:
     show_window: bool = True
     save_output: bool = False
@@ -570,6 +588,7 @@ class AppConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     target_selection_strategy: TargetSelectionStrategy = "closest_to_center"
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    pan_tilt: PanTiltControlConfig = field(default_factory=PanTiltControlConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)

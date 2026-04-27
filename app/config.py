@@ -12,6 +12,7 @@ from app.models import (
     DetectorConfig,
     LoggingConfig,
     OutputConfig,
+    PanTiltControlConfig,
     OverlayConfig,
     ResizeConfig,
     SceneZone,
@@ -139,6 +140,7 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
     source_data = _mapping(data.get("source"))
     detector_data = _mapping(data.get("detector"))
     overlay_data = _mapping(data.get("overlay"))
+    pan_tilt_data = _mapping(data.get("pan_tilt"))
     output_data = _mapping(data.get("output"))
     logging_data = _mapping(data.get("logging"))
     tracking_data = _mapping(data.get("tracking"))
@@ -268,6 +270,22 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             data.get("target_selection_strategy", defaults.target_selection_strategy),
         ),
         overlay=overlay,
+        pan_tilt=PanTiltControlConfig(
+            enabled=bool(pan_tilt_data.get("enabled", defaults.pan_tilt.enabled)),
+            manual_control_only=bool(pan_tilt_data.get("manual_control_only", defaults.pan_tilt.manual_control_only)),
+            base_url=str(pan_tilt_data.get("base_url", defaults.pan_tilt.base_url)),
+            request_timeout_seconds=float(pan_tilt_data.get("request_timeout_seconds", defaults.pan_tilt.request_timeout_seconds)),
+            status_poll_interval_seconds=float(pan_tilt_data.get("status_poll_interval_seconds", defaults.pan_tilt.status_poll_interval_seconds)),
+            default_step_degrees=int(pan_tilt_data.get("default_step_degrees", defaults.pan_tilt.default_step_degrees)),
+            coarse_step_degrees=int(pan_tilt_data.get("coarse_step_degrees", defaults.pan_tilt.coarse_step_degrees)),
+            show_controls=bool(pan_tilt_data.get("show_controls", defaults.pan_tilt.show_controls)),
+            button_up_direction=str(pan_tilt_data.get("button_up_direction", defaults.pan_tilt.button_up_direction)),
+            button_down_direction=str(pan_tilt_data.get("button_down_direction", defaults.pan_tilt.button_down_direction)),
+            button_left_direction=str(pan_tilt_data.get("button_left_direction", defaults.pan_tilt.button_left_direction)),
+            button_right_direction=str(pan_tilt_data.get("button_right_direction", defaults.pan_tilt.button_right_direction)),
+            hold_repeat_interval_seconds=float(pan_tilt_data.get("hold_repeat_interval_seconds", defaults.pan_tilt.hold_repeat_interval_seconds)),
+            default_speed_mode=str(pan_tilt_data.get("default_speed_mode", defaults.pan_tilt.default_speed_mode)),
+        ),
         output=OutputConfig(
             show_window=bool(output_data.get("show_window", defaults.output.show_window)),
             save_output=bool(output_data.get("save_output", defaults.output.save_output)),

@@ -84,6 +84,19 @@ cd ~/PycharmProjects/TrackingCatWIFI
 ./run_camera.sh ipad
 ```
 
+### iPad PanTilt manual aiming
+```bash
+cd ~/PycharmProjects/TrackingCatWIFI
+./run_camera.sh pantilt
+```
+
+This mode keeps cat detection off for now and turns the app into a live aiming console:
+- uses the iPad stream as the camera
+- draws on-screen D-pad buttons for pan / tilt
+- supports fine / normal / coarse step sizes
+- controls the ESP32 over Wi-Fi
+- lets you toggle the laser while you calibrate aim
+
 If the iPhone IP changes, update `source.stream_url` in `configs/iphone_ipcamera.yaml`.
 
 ## Quick mode guide
@@ -94,6 +107,7 @@ If the iPhone IP changes, update `source.stream_url` in `configs/iphone_ipcamera
 | Webcam visual tracking | Smooth live viewing | Slightly more tracker-driven behavior |
 | ESP32 snapshot | Simple remote camera over Wi-Fi | Very low resolution |
 | iPhone IP Camera Lite | Best image quality and widest view | Higher bandwidth and possible latency |
+| iPad PanTilt manual aiming | Live aiming + servo calibration before automation | Manual only, no cat auto-targeting yet |
 
 ## Screenshots
 
@@ -258,3 +272,22 @@ README.md
 - This repository intentionally does not include local virtual environments, logs, alert recordings, backups, certificates, or model weights.
 - Large model files such as `*.pt` are excluded from git.
 - The project is designed for local use on the Ubuntu machine.
+
+
+## ESP32 PanTilt firmware
+
+Firmware sketch: `firmware/esp32_pantilt/esp32_pantilt.ino`
+
+What it does:
+- exposes HTTP control endpoints for pan / tilt / laser
+- stores Wi-Fi and GPIO settings in flash
+- starts STA mode when Wi-Fi is configured
+- falls back to AP setup mode when Wi-Fi is missing or fails
+
+Initial setup after flash:
+1. Power the ESP32 over USB
+2. If it is not on Wi-Fi yet, connect to the AP `TrackingCatPanTilt-xxxxxx`
+3. Open `http://192.168.4.1`
+4. Enter Wi-Fi SSID/password and, if needed, your actual GPIO pins
+5. Reboot the board
+6. Run `./run_camera.sh pantilt`

@@ -18,6 +18,7 @@ from app.audio_alert import AudioAlertPlayer
 from app.detector import DetectorError, YOLODetector
 from app.logger_setup import TrackCoordinateLogger, setup_logging
 from app.models import AppConfig, Detection, FrameTrackingSummary, StageTimings, TrackingPipelineState
+from app.pan_tilt import PanTiltController, PanTiltControlOverlay
 from app.overlay import OverlayRenderer
 from app.surface_monitor import SurfaceMonitor
 from app.target_selector import TargetSelector
@@ -273,6 +274,9 @@ def main() -> int:
         )
         return zone_editor.run()
 
+    if config.pan_tilt.enabled and config.pan_tilt.manual_control_only:
+        return _run_pan_tilt_manual_mode(config=config, logger=logger)
+
     _adjust_detector_threshold_for_runtime_mode(
         config=config,
         logger=logger,
@@ -525,6 +529,125 @@ def main() -> int:
         source.release()
         if video_writer is not None:
             video_writer.release()
+        if window_enabled:
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                logger.debug("OpenCV window cleanup failed.", exc_info=True)
+
+
+def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
+    source = VideoSource(config=config.source, logger=logger)
+    controller = PanTiltController(config=config.pan_tilt, logger=logger)
+    ui = PanTiltControlOverlay(config=config.pan_tilt)
+    fps_meter = FPSMeter()
+    shutdown_event = Event()
+    window_enabled = _initialize_window(config, logger)
+    latest_buttons = []
+    held_action: str | None = None
+    last_hold_command_ts = 0.0
+
+    def _handle_shutdown(signum: int, _frame: object) -> None:
+        logger.info("Signal %d received. Shutting down.", signum)
+        shutdown_event.set()
+
+    def _mouse_callback(event: int, x: int, y: int, _flags: int, _param: object) -> None:
+        nonlocal latest_buttons, held_action, last_hold_command_ts
+        button = ui.find_button(latest_buttons, x, y)
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if button is None:
+                held_action = None
+                return
+            try:
+                if button.action in {"up", "down", "left", "right"}:
+                    held_action = button.action
+                    controller.start_continuous_move(button.action)
+                    last_hold_command_ts = time.monotonic()
+                else:
+                    controller.execute_action(button.action)
+            except Exception:
+                logger.exception("PanTilt action failed: %s", button.action)
+            return
+        if event == cv2.EVENT_MOUSEMOVE and held_action is not None and button is None:
+            try:
+                controller.stop()
+            except Exception:
+                logger.exception("PanTilt stop failed after drag-out: %s", held_action)
+            held_action = None
+            return
+        if event == cv2.EVENT_LBUTTONUP:
+            if held_action is not None:
+                try:
+                    controller.stop()
+                except Exception:
+                    logger.exception("PanTilt stop failed on mouse release: %s", held_action)
+            held_action = None
+            return
+
+    signal.signal(signal.SIGINT, _handle_shutdown)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_shutdown)
+
+    try:
+        source.open()
+        controller.maybe_refresh_state(force=True)
+        if window_enabled:
+            cv2.setMouseCallback(config.output.window_name, _mouse_callback)
+        while not shutdown_event.is_set():
+            ok, frame = source.read()
+            if not ok:
+                if source.status == "ended":
+                    logger.info("Input stream ended.")
+                    break
+                time.sleep(0.01)
+                controller.maybe_refresh_state()
+                continue
+            if frame is None or frame.size == 0:
+                continue
+            frame = _maybe_resize_frame(frame, config)
+            fps = fps_meter.update()
+            controller.maybe_refresh_state()
+            if config.pan_tilt.show_controls:
+                latest_buttons = ui.draw(frame=frame, state=controller.state, fps=fps, source_status=source.status)
+            if window_enabled:
+                try:
+                    cv2.imshow(config.output.window_name, frame)
+                except cv2.error:
+                    logger.exception("OpenCV window update failed. Disabling GUI output.")
+                    window_enabled = False
+                else:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        break
+                    if key == ord("w"):
+                        controller.move("up")
+                    elif key == ord("s"):
+                        controller.move("down")
+                    elif key == ord("a"):
+                        controller.move("left")
+                    elif key == ord("d"):
+                        controller.move("right")
+                    elif key == ord("1"):
+                        controller.set_step(1)
+                    elif key == ord("3"):
+                        controller.set_step(config.pan_tilt.default_step_degrees)
+                    elif key == ord("8"):
+                        controller.set_step(config.pan_tilt.coarse_step_degrees)
+                    elif key == ord("l"):
+                        controller.toggle_laser()
+                    elif key == ord("c"):
+                        controller.center()
+                    elif key == ord("r"):
+                        controller.maybe_refresh_state(force=True)
+        return 0
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user.")
+        return 0
+    except VideoSourceError as exc:
+        logger.error(str(exc))
+        return 4
+    finally:
+        source.release()
         if window_enabled:
             try:
                 cv2.destroyAllWindows()

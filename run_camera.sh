@@ -22,8 +22,11 @@ case "$MODE" in
   ipad-ipcam|ipad|ipadcamera)
     CONFIG="configs/ipad_ipcamera.yaml"
     ;;
+  ipad-pantilt|pantilt|ipad-pan-tilt)
+    CONFIG="configs/ipad_pantilt.yaml"
+    ;;
   *)
-    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|esp32|iphone|ipad] [extra app args...]" >&2
+    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|esp32|iphone|ipad|pantilt] [extra app args...]" >&2
     exit 2
     ;;
 esac
