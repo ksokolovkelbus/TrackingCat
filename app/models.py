@@ -571,8 +571,12 @@ class PanTiltControlConfig:
     auto_calibration_pan_max_angle: float = 150.0
     auto_calibration_tilt_min_angle: float = 35.0
     auto_calibration_tilt_max_angle: float = 145.0
-    auto_calibration_settle_seconds: float = 0.45
-    auto_calibration_detection_timeout_seconds: float = 1.2
+    auto_calibration_local_pan_step_degrees: float = 8.0
+    auto_calibration_local_tilt_step_degrees: float = 8.0
+    auto_calibration_local_pan_points: int = 5
+    auto_calibration_local_tilt_points: int = 5
+    auto_calibration_settle_seconds: float = 0.25
+    auto_calibration_detection_timeout_seconds: float = 0.35
     auto_calibration_min_samples: int = 8
     auto_aim_enabled: bool = False
     auto_aim_interval_seconds: float = 0.18

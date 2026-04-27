@@ -47,8 +47,12 @@ pan_tilt:
   auto_calibration_pan_max_angle: 150
   auto_calibration_tilt_min_angle: 35
   auto_calibration_tilt_max_angle: 145
-  auto_calibration_settle_seconds: 0.45
-  auto_calibration_detection_timeout_seconds: 1.2
+  auto_calibration_local_pan_step_degrees: 8
+  auto_calibration_local_tilt_step_degrees: 8
+  auto_calibration_local_pan_points: 5
+  auto_calibration_local_tilt_points: 5
+  auto_calibration_settle_seconds: 0.25
+  auto_calibration_detection_timeout_seconds: 0.35
   auto_calibration_min_samples: 8
   auto_aim_enabled: false
   auto_aim_interval_seconds: 0.18

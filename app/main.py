@@ -580,20 +580,6 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
         calibration_notice = message
         calibration_notice_until = time.monotonic() + seconds
 
-    def _fetch_calibration_frame() -> np.ndarray | None:
-        deadline = time.monotonic() + max(1.0, config.pan_tilt.auto_calibration_detection_timeout_seconds)
-        while time.monotonic() < deadline and not shutdown_event.is_set():
-            ok, frame = source.read()
-            if not ok:
-                if source.status == "ended":
-                    return None
-                time.sleep(0.02)
-                continue
-            if frame is None or frame.size == 0:
-                continue
-            return _maybe_resize_frame(frame, config)
-        return None
-
     def _handle_shutdown(signum: int, _frame: object) -> None:
         logger.info("Signal %d received. Shutting down.", signum)
         shutdown_event.set()
@@ -661,21 +647,37 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
             controller.maybe_refresh_state()
 
             if pending_special_action == "auto-calibrate":
-                controller.state.calibrating = True
                 pending_special_action = None
-                _set_notice("AUTO CAL started...", seconds=2.0)
                 try:
-                    data = calibrator.calibrate(fetch_frame=_fetch_calibration_frame)
-                    controller.state.calibration_loaded = True
-                    controller.state.calibration_samples = len(data.samples)
-                    _set_notice(f"AUTO CAL ready: {len(data.samples)} pts, fit {data.fit_error_degrees:.1f} deg", seconds=8.0)
+                    message = calibrator.start(frame=frame)
+                    controller.state.calibrating = True
+                    controller.state.calibration_progress_text = "cal: 0/?"
+                    _set_notice(message, seconds=3.0)
                 except Exception as exc:
                     controller.state.last_error = str(exc)
                     _set_notice(f"AUTO CAL failed: {exc}", seconds=8.0)
-                    logger.exception("PanTilt auto calibration failed.")
-                finally:
+                    logger.exception("PanTilt auto calibration start failed.")
+
+            if calibrator.progress.running:
+                try:
+                    message = calibrator.tick(frame=frame)
+                    controller.state.calibrating = calibrator.progress.running
+                    controller.state.calibration_progress_text = f"cal: {calibrator.progress.sample_index}/{calibrator.progress.total_samples}"
+                    if message:
+                        loaded = calibrator.calibration
+                        controller.state.calibration_loaded = loaded is not None
+                        controller.state.calibration_samples = len(loaded.samples) if loaded is not None else 0
+                        controller.state.calibrating = False
+                        controller.state.calibration_progress_text = None
+                        _set_notice(message, seconds=8.0)
+                        controller.maybe_refresh_state(force=True)
+                except Exception as exc:
+                    controller.state.last_error = str(exc)
                     controller.state.calibrating = False
-                    controller.maybe_refresh_state(force=True)
+                    controller.state.calibration_progress_text = None
+                    calibrator.stop()
+                    _set_notice(f"AUTO CAL failed: {exc}", seconds=8.0)
+                    logger.exception("PanTilt auto calibration failed.")
 
             laser_detection = calibrator.detector.detect(frame) if controller.state.laser_on else None
             notice = calibration_notice if time.monotonic() <= calibration_notice_until else None

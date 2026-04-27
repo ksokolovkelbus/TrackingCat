@@ -30,6 +30,7 @@ class PanTiltState:
     calibration_loaded: bool = False
     calibration_samples: int = 0
     calibrating: bool = False
+    calibration_progress_text: str | None = None
     auto_aim_enabled: bool = False
 
 
@@ -244,7 +245,7 @@ class PanTiltControlOverlay:
     def _draw_header(self, frame: np.ndarray, state: PanTiltState, fps: float, source_status: str) -> None:
         cal_text = f"cal: {'READY' if state.calibration_loaded else 'NO'} ({state.calibration_samples} pts)"
         if state.calibrating:
-            cal_text = "cal: RUNNING"
+            cal_text = state.calibration_progress_text or "cal: RUNNING"
         lines = [
             "iPad PanTilt manual mode",
             f"source: {source_status} | fps: {fps:.1f}",

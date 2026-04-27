@@ -29,3 +29,21 @@ def test_calibration_data_predicts_angles_from_pixel() -> None:
     pan, tilt = data.pixel_to_angles(100, 50)
     assert round(pan, 3) == 90.0
     assert round(tilt, 3) == 45.0
+
+
+def test_calibrator_builds_local_targets() -> None:
+    from app.pan_tilt_auto import PanTiltCalibrator
+    from app.pan_tilt import PanTiltController
+    import logging
+
+    class DummyController(PanTiltController):
+        def __init__(self):
+            super().__init__(PanTiltControlConfig(enabled=True), logging.getLogger("test"))
+        def _request_json(self, path, params=None):
+            return {"pan_angle": 90, "tilt_angle": 90, "step_degrees": 3, "speed_mode": "medium", "laser_on": True, "connected": True}
+
+    cfg = PanTiltControlConfig(enabled=True, auto_calibration_local_pan_step_degrees=8, auto_calibration_local_tilt_step_degrees=6, auto_calibration_local_pan_points=3, auto_calibration_local_tilt_points=3)
+    cal = PanTiltCalibrator(cfg, DummyController(), logging.getLogger("test"))
+    grid = cal._build_local_targets(90.0, 90.0)
+    assert len(grid) == 9
+    assert (90.0, 90.0) in grid
