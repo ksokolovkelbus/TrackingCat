@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -24,7 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--names", nargs="+", default=None)
     parser.add_argument("--sample-every", type=int, default=10, help="Use every Nth source frame.")
     parser.add_argument("--max-samples", type=int, default=120)
-    parser.add_argument("--warmup", type=int, default=3)
+    parser.add_argument("--warmup", type=int, default=20, help="Warmup frames not included in timing.")
+    parser.add_argument("--repeats", type=int, default=3, help="Repeat timed pass N times on already loaded models.")
     return parser.parse_args()
 
 
@@ -45,6 +47,14 @@ def load_frames(video: Path, sample_every: int, max_samples: int):
     return frames
 
 
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((pct / 100.0) * (len(ordered) - 1))))
+    return ordered[index]
+
+
 def main() -> int:
     args = parse_args()
     logging.getLogger("ultralytics").setLevel(logging.WARNING)
@@ -57,24 +67,36 @@ def main() -> int:
     if not frames:
         print("No frames loaded")
         return 3
+    warmup_frames = frames[: min(args.warmup, len(frames))]
     print(f"Loaded {len(frames)} sampled frames from {args.video}")
-    print("name\tmodel\timgsz\tconf\tavg_ms\tfps\tavg_cats\tzero_frames")
+    print(f"Warmup frames per config: {len(warmup_frames)}; timed repeats: {args.repeats}")
+    print("name\tmodel\timgsz\tconf\trepeat\tavg_ms\tmedian_ms\tp95_ms\tfps\tavg_cats\tzero_frames")
     for name, config_path in zip(names, args.configs):
         config = load_config(config_path)
+        load_started = time.perf_counter()
         detector = YOLODetector(config.detector, logger)
-        for frame in frames[: args.warmup]:
+        load_ms = (time.perf_counter() - load_started) * 1000.0
+        for frame in warmup_frames:
             detector.track(frame, tracker=config.tracking.yolo_tracker)
-        counts = []
-        started = time.perf_counter()
-        for frame in frames:
-            detections = detector.track(frame, tracker=config.tracking.yolo_tracker)
-            counts.append(len(detections))
-        elapsed = time.perf_counter() - started
-        avg_ms = elapsed / len(frames) * 1000.0
-        fps = len(frames) / elapsed
-        avg_cats = sum(counts) / len(counts)
-        zero_frames = sum(1 for count in counts if count == 0)
-        print(f"{name}\t{config.detector.model_path}\t{config.detector.imgsz}\t{config.detector.confidence_threshold:.3f}\t{avg_ms:.1f}\t{fps:.2f}\t{avg_cats:.2f}\t{zero_frames}")
+        print(f"# loaded {name} in {load_ms:.1f} ms; load time excluded from inference rows")
+        for repeat in range(1, args.repeats + 1):
+            times_ms: list[float] = []
+            counts: list[int] = []
+            for frame in frames:
+                started = time.perf_counter()
+                detections = detector.track(frame, tracker=config.tracking.yolo_tracker)
+                times_ms.append((time.perf_counter() - started) * 1000.0)
+                counts.append(len(detections))
+            avg_ms = statistics.fmean(times_ms)
+            median_ms = statistics.median(times_ms)
+            p95_ms = percentile(times_ms, 95)
+            fps = 1000.0 / avg_ms if avg_ms > 0 else 0.0
+            avg_cats = statistics.fmean(counts)
+            zero_frames = sum(1 for count in counts if count == 0)
+            print(
+                f"{name}\t{config.detector.model_path}\t{config.detector.imgsz}\t{config.detector.confidence_threshold:.3f}\t"
+                f"{repeat}\t{avg_ms:.1f}\t{median_ms:.1f}\t{p95_ms:.1f}\t{fps:.2f}\t{avg_cats:.2f}\t{zero_frames}"
+            )
     return 0
 
 
