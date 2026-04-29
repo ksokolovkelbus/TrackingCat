@@ -4,7 +4,6 @@ import argparse
 import logging
 import sys
 import time
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -65,8 +64,8 @@ def _prepare_config(path: str, device: str | None) -> AppConfig:
     config.output.save_output = False
     config.surface_alert.enabled = False
     config.alert_recording.enabled = False
-    config.overlay.debug_overlay = True
-    config.overlay.show_debug_counters = True
+    config.overlay.debug_overlay = False
+    config.overlay.show_debug_counters = False
     config.overlay.show_cat_count = True
     return config
 
