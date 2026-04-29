@@ -257,3 +257,92 @@ class VideoSource:
         query.append(("_ts", str(time.time_ns())))
         query.append(("_seq", str(self._snapshot_counter)))
         return urllib_parse.urlunsplit(parsed._replace(query=urllib_parse.urlencode(query)))
+
+
+class LatestFrameVideoSource:
+    """VideoSource wrapper that keeps only the newest live frame.
+
+    This prevents realtime modes from processing a backlog of stale camera frames
+    when YOLO inference is slower than the camera FPS.
+    """
+
+    def __init__(self, source: VideoSource, logger: logging.Logger, wait_ms: int = 5) -> None:
+        from threading import Event, Lock, Thread
+
+        self._source = source
+        self._logger = logger
+        self._wait_seconds = max(0.0, wait_ms / 1000.0)
+        self._lock = Lock()
+        self._new_frame_event = Event()
+        self._stop_event = Event()
+        self._thread: Thread | None = None
+        self._latest_frame: np.ndarray | None = None
+        self._latest_sequence = 0
+        self._last_delivered_sequence = 0
+        self._read_failures = 0
+        self.dropped_frames = 0
+        self.status = "disconnected"
+
+    def open(self) -> None:
+        from threading import Thread
+
+        self._source.open()
+        self.status = self._source.status
+        self._stop_event.clear()
+        self._thread = Thread(target=self._reader_loop, name="latest-frame-reader", daemon=True)
+        self._thread.start()
+        self._logger.info(
+            "Latest-frame realtime source enabled: stale camera frames will be dropped before inference."
+        )
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        if self._thread is None:
+            return False, None
+
+        if self._wait_seconds > 0:
+            self._new_frame_event.wait(self._wait_seconds)
+        self._new_frame_event.clear()
+
+        with self._lock:
+            if self._latest_frame is None:
+                self.status = self._source.status
+                return False, None
+            sequence = self._latest_sequence
+            if sequence == self._last_delivered_sequence:
+                self.status = self._source.status
+                return False, None
+            if self._last_delivered_sequence:
+                self.dropped_frames += max(0, sequence - self._last_delivered_sequence - 1)
+            self._last_delivered_sequence = sequence
+            frame = self._latest_frame.copy()
+            self.status = self._source.status
+            return True, frame
+
+    def is_opened(self) -> bool:
+        return self._source.is_opened()
+
+    def release(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        self._source.release()
+        self.status = self._source.status
+
+    def _reader_loop(self) -> None:
+        while not self._stop_event.is_set():
+            ok, frame = self._source.read()
+            self.status = self._source.status
+            if not ok:
+                if self._source.status == "ended":
+                    self.status = "ended"
+                    break
+                self._read_failures += 1
+                time.sleep(0.005)
+                continue
+            if frame is None or frame.size == 0:
+                continue
+            with self._lock:
+                self._latest_frame = frame
+                self._latest_sequence += 1
+            self._new_frame_event.set()

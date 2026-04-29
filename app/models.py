@@ -13,6 +13,7 @@ TargetSelectionStrategy: TypeAlias = Literal[
 ]
 CoordinateLogFormat: TypeAlias = Literal["csv", "jsonl"]
 DisplaySortMode: TypeAlias = Literal["top_to_bottom_left_to_right"]
+TrackingBackend: TypeAlias = Literal["hybrid", "yolo_native", "bytetrack", "botsort"]
 ZoneCoordinatesMode: TypeAlias = Literal["normalized", "pixels"]
 ZoneShapeType: TypeAlias = Literal["rect", "polygon"]
 AlertPointMode: TypeAlias = Literal["crosshair_center"]
@@ -32,6 +33,7 @@ class Detection:
     y1: float
     x2: float
     y2: float
+    track_id: int | None = None
 
     @property
     def bbox(self) -> FloatBBox:
@@ -419,6 +421,8 @@ class SourceConfig:
     buffer_size: int = 1
     snapshot_timeout_seconds: float = 2.0
     snapshot_use_cache_bust: bool = True
+    realtime_latest_frame: bool = False
+    latest_frame_wait_ms: int = 5
 
     def resolved_source(self) -> int | str:
         if self.source_type == "webcam":
@@ -446,6 +450,8 @@ class DetectorConfig:
 @dataclass(slots=True)
 class TrackingConfig:
     tracking_enabled: bool = True
+    backend: TrackingBackend = "hybrid"
+    yolo_tracker: str = "bytetrack.yaml"
     multi_target_enabled: bool = True
     tracker_only_mode_after_confirm: bool = True
     detector_interval_while_tracking: int = 6

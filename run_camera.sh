@@ -13,6 +13,15 @@ case "$MODE" in
   webcam-visual|visual|tracking-visual)
     CONFIG="configs/webcam_visual_tracking.yaml"
     ;;
+  webcam-manycats|manycats|multi-cats|multi-cat)
+    CONFIG="configs/webcam_manycats.yaml"
+    ;;
+  webcam-yolo-track|yolo-track|native-track)
+    CONFIG="configs/webcam_yolo_track.yaml"
+    ;;
+  webcam-botsort-track|botsort-track)
+    CONFIG="configs/webcam_botsort_track.yaml"
+    ;;
   esp32|wifi|esp32_wifi)
     CONFIG="configs/esp32_wifi.yaml"
     ;;
@@ -22,11 +31,20 @@ case "$MODE" in
   ipad-ipcam|ipad|ipadcamera)
     CONFIG="configs/ipad_ipcamera.yaml"
     ;;
+  ipad-manycats|ipad-multi-cats|ipad-multi-cat)
+    CONFIG="configs/ipad_manycats.yaml"
+    ;;
+  ipad-yolo-track|ipad-native-track)
+    CONFIG="configs/ipad_yolo_track.yaml"
+    ;;
+  ipad-botsort-track|ipad-botsort)
+    CONFIG="configs/ipad_botsort_track.yaml"
+    ;;
   ipad-pantilt|pantilt|ipad-pan-tilt)
     CONFIG="configs/ipad_pantilt.yaml"
     ;;
   *)
-    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|esp32|iphone|ipad|pantilt] [extra app args...]" >&2
+    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|webcam-manycats|webcam-yolo-track|webcam-botsort-track|esp32|iphone|ipad|ipad-manycats|ipad-yolo-track|ipad-botsort-track|pantilt] [extra app args...]" >&2
     exit 2
     ;;
 esac

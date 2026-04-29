@@ -50,6 +50,12 @@ class YOLODetector:
         )
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
+        return self._infer(frame=frame, use_tracking=False)
+
+    def track(self, frame: np.ndarray, tracker: str = "bytetrack.yaml") -> list[Detection]:
+        return self._infer(frame=frame, use_tracking=True, tracker=tracker)
+
+    def _infer(self, frame: np.ndarray, use_tracking: bool = False, tracker: str = "bytetrack.yaml") -> list[Detection]:
         if frame is None or frame.size == 0:
             self._logger.warning("Detector received an empty frame.")
             return []
@@ -58,14 +64,26 @@ class YOLODetector:
         frame_area = float(frame_width * frame_height)
 
         try:
-            results = self._model.predict(
-                source=frame,
-                imgsz=self._config.imgsz,
-                conf=self._config.confidence_threshold,
-                iou=self._config.iou_threshold,
-                device=self._device,
-                verbose=False,
-            )
+            if use_tracking:
+                results = self._model.track(
+                    source=frame,
+                    imgsz=self._config.imgsz,
+                    conf=self._config.confidence_threshold,
+                    iou=self._config.iou_threshold,
+                    device=self._device,
+                    verbose=False,
+                    persist=True,
+                    tracker=tracker,
+                )
+            else:
+                results = self._model.predict(
+                    source=frame,
+                    imgsz=self._config.imgsz,
+                    conf=self._config.confidence_threshold,
+                    iou=self._config.iou_threshold,
+                    device=self._device,
+                    verbose=False,
+                )
         except Exception:
             self._logger.exception("YOLO inference failed.")
             return []
@@ -113,6 +131,10 @@ class YOLODetector:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             class_id = int(box.cls[0].item())
             confidence = float(box.conf[0].item())
+            track_id = None
+            box_track_id = getattr(box, id, None)
+            if box_track_id is not None:
+                track_id = int(box_track_id[0].item())
         except Exception:
             self._logger.debug("Skipping malformed detection box.", exc_info=True)
             return None
@@ -129,6 +151,7 @@ class YOLODetector:
             y1=float(y1),
             x2=float(x2),
             y2=float(y2),
+            track_id=track_id,
         )
 
     def _resolve_device(self, requested_device: str) -> str:

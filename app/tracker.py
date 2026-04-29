@@ -767,7 +767,7 @@ class MultiCatTracker:
         height = max(1.0, reference_bbox[3] - reference_bbox[1])
         duplicate_distance_gate = min(
             self._config.soft_center_distance_gate,
-            max(width, height) * 3.0,
+            max(width, height) * 0.75,
         )
         return (
             self._config.soft_min_area_ratio <= ratio <= self._config.soft_max_area_ratio

@@ -252,6 +252,12 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             snapshot_use_cache_bust=bool(
                 source_data.get("snapshot_use_cache_bust", defaults.source.snapshot_use_cache_bust),
             ),
+            realtime_latest_frame=bool(
+                source_data.get("realtime_latest_frame", defaults.source.realtime_latest_frame),
+            ),
+            latest_frame_wait_ms=int(
+                source_data.get("latest_frame_wait_ms", defaults.source.latest_frame_wait_ms),
+            ),
         ),
         detector=DetectorConfig(
             model_path=str(detector_data.get("model_path", defaults.detector.model_path)),
@@ -355,6 +361,8 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
         ),
         tracking=TrackingConfig(
             tracking_enabled=bool(tracking_data.get("tracking_enabled", defaults.tracking.tracking_enabled)),
+            backend=str(tracking_data.get("backend", defaults.tracking.backend)),
+            yolo_tracker=str(tracking_data.get("yolo_tracker", defaults.tracking.yolo_tracker)),
             multi_target_enabled=bool(
                 tracking_data.get("multi_target_enabled", defaults.tracking.multi_target_enabled),
             ),
@@ -820,6 +828,10 @@ def _validate_config(config: AppConfig) -> None:
         raise ConfigError("source.process_every_n_frames must be >= 1.")
     if config.source.snapshot_timeout_seconds <= 0:
         raise ConfigError("source.snapshot_timeout_seconds must be > 0.")
+    if config.source.latest_frame_wait_ms < 0:
+        raise ConfigError("source.latest_frame_wait_ms must be >= 0.")
+    if config.tracking.backend not in {"hybrid", "yolo_native", "bytetrack", "botsort"}:
+        raise ConfigError("tracking.backend must be hybrid, yolo_native, bytetrack, or botsort.")
     if config.tracking.detector_interval_while_tracking <= 0:
         raise ConfigError("tracking.detector_interval_while_tracking must be >= 1.")
     if config.tracking.reacquire_after_failed_tracker_frames <= 0:

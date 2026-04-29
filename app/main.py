@@ -17,15 +17,15 @@ from app.alert_recorder import AlertRecorder
 from app.audio_alert import AudioAlertPlayer
 from app.detector import DetectorError, YOLODetector
 from app.logger_setup import TrackCoordinateLogger, setup_logging
-from app.models import AppConfig, Detection, FrameTrackingSummary, StageTimings, TrackingPipelineState
+from app.models import AppConfig, Detection, FrameTrackingSummary, StageTimings, Track, TrackState, TrackingPipelineState
 from app.pan_tilt import PanTiltController, PanTiltControlOverlay
 from app.pan_tilt_auto import PanTiltCalibrator
 from app.overlay import OverlayRenderer
 from app.surface_monitor import SurfaceMonitor
 from app.target_selector import TargetSelector
 from app.tracker import DetectThenTrackManager, MultiCatTracker
-from app.utils import FPSMeter, build_detection_overlays
-from app.video_source import VideoSource, VideoSourceError
+from app.utils import FPSMeter, bbox_to_square, build_detection_overlays, normalize_coordinates, sort_tracks_for_display
+from app.video_source import LatestFrameVideoSource, VideoSource, VideoSourceError
 from app.zone_editor import ZoneEditor
 from app.zones import SceneZoneClassifier
 
@@ -286,15 +286,25 @@ def main() -> int:
 
     try:
         detector = YOLODetector(config=config.detector, logger=logger)
-        source = VideoSource(config=config.source, logger=logger)
+        base_source = VideoSource(config=config.source, logger=logger)
+        source = (
+            LatestFrameVideoSource(
+                source=base_source,
+                logger=logger,
+                wait_ms=config.source.latest_frame_wait_ms,
+            )
+            if config.source.realtime_latest_frame and config.source.source_type != "file"
+            else base_source
+        )
     except (DetectorError, VideoSourceError) as exc:
         logger.error(str(exc))
         return 3
 
     selector = TargetSelector(strategy=config.target_selection_strategy)
+    use_yolo_native_tracking = config.tracking.tracking_enabled and config.tracking.backend in {"yolo_native", "bytetrack", "botsort"}
     tracker_manager = (
         DetectThenTrackManager(config=config.tracking, logger=logger)
-        if config.tracking.tracking_enabled
+        if config.tracking.tracking_enabled and not use_yolo_native_tracking
         else None
     )
     overlay = OverlayRenderer(config.overlay)
@@ -365,7 +375,14 @@ def main() -> int:
             )
 
             detect_or_track_started = time.perf_counter()
-            if tracker_manager is None:
+            if use_yolo_native_tracking:
+                summary = _process_yolo_native_tracking_frame(
+                    detector=detector,
+                    frame=frame,
+                    frame_index=frame_index,
+                    config=config,
+                )
+            elif tracker_manager is None:
                 summary = _process_detection_only_frame(
                     detector=detector,
                     frame=frame,
@@ -738,6 +755,84 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
                 logger.debug("OpenCV window cleanup failed.", exc_info=True)
 
 
+
+def _process_yolo_native_tracking_frame(
+    detector: YOLODetector,
+    frame: np.ndarray,
+    frame_index: int,
+    config: AppConfig,
+) -> FrameTrackingSummary:
+    detections = detector.track(frame, tracker=config.tracking.yolo_tracker)
+    tracks = _build_yolo_native_tracks(detections=detections, frame_shape=frame.shape, frame_index=frame_index)
+    return FrameTrackingSummary(
+        frame_index=frame_index,
+        frame_width=frame.shape[1],
+        frame_height=frame.shape[0],
+        tracking_enabled=True,
+        detections_count=len(detections),
+        pipeline_state=TrackingPipelineState.TRACK_ONLY,
+        yolo_ran_this_frame=True,
+        raw_detections_count=len(detections),
+        cat_detections_count=len(detections),
+        acquire_candidate_count=sum(
+            1 for detection in detections
+            if detection.confidence >= config.tracking.acquire_confidence_threshold
+        ),
+        keep_candidate_count=sum(
+            1 for detection in detections
+            if detection.confidence >= config.tracking.keep_confidence_threshold
+        ),
+        visible_tracks=tracks,
+    )
+
+
+def _build_yolo_native_tracks(
+    detections: list[Detection],
+    frame_shape: tuple[int, int] | tuple[int, int, int],
+    frame_index: int,
+) -> list[Track]:
+    frame_height, frame_width = frame_shape[:2]
+    tracks: list[Track] = []
+    for index, detection in enumerate(detections, start=1):
+        track_id = detection.track_id if detection.track_id is not None else index
+        center_x = detection.center_x
+        center_y = detection.center_y
+        normalized_x, normalized_y = normalize_coordinates(center_x, center_y, frame_width, frame_height)
+        tracks.append(
+            Track(
+                track_id=track_id,
+                display_number=None,
+                state=TrackState.CONFIRMED,
+                bbox=detection.bbox,
+                square_bbox=bbox_to_square(
+                    detection.x1, detection.y1, detection.x2, detection.y2, frame_width, frame_height,
+                ),
+                center_x=center_x,
+                center_y=center_y,
+                normalized_x=normalized_x,
+                normalized_y=normalized_y,
+                confidence=detection.confidence,
+                age=1,
+                hits=1,
+                misses=0,
+                consecutive_hits=1,
+                consecutive_misses=0,
+                first_seen_frame=frame_index,
+                last_seen_frame=frame_index,
+                last_detection_frame=frame_index,
+                last_update_ts=0.0,
+                reconfirm_hits=0,
+                held_frames=0,
+                tracker_only_updates=0,
+                tracker_failures=0,
+                class_name=detection.class_name,
+            ),
+        )
+    visible = sort_tracks_for_display(tracks, mode="top_to_bottom_left_to_right")
+    for display_number, track in enumerate(visible, start=1):
+        track.display_number = display_number
+    return visible
+
 def _process_detection_only_frame(
     detector: YOLODetector,
     frame: np.ndarray,
@@ -854,7 +949,8 @@ def _log_frame_debug(
     logger.debug(
         "frame_debug frame_index=%d processed=%s pipeline=%s yolo_ran=%s "
         "raw_detections=%d cat_detections=%d after_acquire=%d after_keep=%d "
-        "tracker_updates=%d tracker_failures=%d active_tracks=%d confirmed=%d held=%d lost=%d tracking_enabled=%s",
+        "tracker_updates=%d tracker_failures=%d active_tracks=%d confirmed=%d held=%d lost=%d tracking_enabled=%s "
+        "timings_ms=source:%.1f resize:%.1f detect_track:%.1f surface:%.1f overlay:%.1f record:%.1f output:%.1f window:%.1f total:%.1f",
         frame_index,
         processed_this_frame,
         summary.pipeline_state.value,

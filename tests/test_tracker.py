@@ -363,6 +363,30 @@ def test_duplicate_detection_is_reserved_for_existing_confirmed_track() -> None:
     assert summary.tentative_tracks == []
 
 
+
+def test_nearby_second_cat_is_not_reserved_by_existing_track() -> None:
+    tracker = _make_tracker(confirm_frames=1, soft_center_distance_gate=300.0)
+
+    first = tracker.update(
+        detections=[Detection(15, "cat", 0.95, 10, 40, 60, 90)],
+        frame_shape=(200, 240, 3),
+        frame_index=1,
+        timestamp=1.0,
+    )
+    summary = tracker.update(
+        detections=[
+            Detection(15, "cat", 0.94, 12, 40, 62, 90),
+            Detection(15, "cat", 0.91, 110, 42, 160, 92),
+        ],
+        frame_shape=(200, 240, 3),
+        frame_index=2,
+        timestamp=2.0,
+    )
+
+    assert first.visible_count == 1
+    assert summary.visible_count == 2
+    assert {track.track_id for track in summary.visible_tracks} == {1, 2}
+
 def test_opencv_frame_tracker_prefers_csrt_backend() -> None:
     factory_calls: list[str] = []
 
