@@ -45,3 +45,5 @@ htmlcov/
 # Environment files
 .env
 .env.*
+*_openvino_model/
+

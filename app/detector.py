@@ -20,7 +20,7 @@ class YOLODetector:
         self._yolo = self._import_yolo()
 
         try:
-            self._model = self._yolo(config.model_path)
+            self._model = self._yolo(config.model_path, task="detect")
         except Exception as exc:
             raise DetectorError(
                 f"Failed to load YOLO model from '{config.model_path}'."
