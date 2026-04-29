@@ -28,6 +28,12 @@ case "$MODE" in
   iphone-ipcam|iphone|ipcam)
     CONFIG="configs/iphone_ipcamera.yaml"
     ;;
+  iphone-yolo-track|iphone-bytetrack)
+    CONFIG="configs/iphone_yolo_track.yaml"
+    ;;
+  iphone-botsort-track|iphone-botsort)
+    CONFIG="configs/iphone_botsort_track.yaml"
+    ;;
   ipad-ipcam|ipad|ipadcamera)
     CONFIG="configs/ipad_ipcamera.yaml"
     ;;
@@ -44,7 +50,7 @@ case "$MODE" in
     CONFIG="configs/ipad_pantilt.yaml"
     ;;
   *)
-    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|webcam-manycats|webcam-yolo-track|webcam-botsort-track|esp32|iphone|ipad|ipad-manycats|ipad-yolo-track|ipad-botsort-track|pantilt] [extra app args...]" >&2
+    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|webcam-manycats|webcam-yolo-track|webcam-botsort-track|esp32|iphone|iphone-yolo-track|iphone-botsort-track|ipad|ipad-manycats|ipad-yolo-track|ipad-botsort-track|pantilt] [extra app args...]" >&2
     exit 2
     ;;
 esac
