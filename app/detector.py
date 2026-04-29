@@ -132,7 +132,7 @@ class YOLODetector:
             class_id = int(box.cls[0].item())
             confidence = float(box.conf[0].item())
             track_id = None
-            box_track_id = getattr(box, id, None)
+            box_track_id = getattr(box, "id", None)
             if box_track_id is not None:
                 track_id = int(box_track_id[0].item())
         except Exception:

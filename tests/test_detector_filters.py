@@ -49,3 +49,43 @@ def test_reasonable_detection_is_kept() -> None:
     result = detector.detect(np.zeros((100, 100, 3), dtype=np.uint8))
     assert len(result) == 1
     assert result[0].class_name == 'cat'
+
+
+class _Scalar:
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def item(self) -> float:
+        return self._value
+
+
+class _ListLike:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def tolist(self):
+        return self._value
+
+
+class _ArrayLike:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def __getitem__(self, index: int):
+        return _ListLike(self._value[index])
+
+
+def test_build_detection_reads_ultralytics_track_id() -> None:
+    detector = _make_detector(max_frame_area_ratio=1.0, confidence_threshold=0.1)
+    box = SimpleNamespace(
+        xyxy=_ArrayLike([[10.0, 20.0, 50.0, 80.0]]),
+        cls=[_Scalar(15)],
+        conf=[_Scalar(0.91)],
+        id=[_Scalar(42)],
+    )
+
+    detection = detector._build_detection(box=box, names={15: "cat"})
+
+    assert detection is not None
+    assert detection.class_name == "cat"
+    assert detection.track_id == 42
