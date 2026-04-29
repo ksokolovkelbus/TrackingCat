@@ -44,10 +44,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--panel-width", type=int, default=426)
     p.add_argument("--panel-height", type=int, default=320)
     p.add_argument("--show", action="store_true")
+    p.add_argument("--tracker", default="configs/bytetrack_cats_fast20.yaml")
     return p.parse_args()
 
 
-def make_config(model: str, imgsz: int, conf: float):
+def make_config(model: str, imgsz: int, conf: float, tracker: str):
     c = load_config("configs/iphone_fast20_bytetrack.yaml")
     c.detector.model_path = model
     c.detector.imgsz = imgsz
@@ -55,7 +56,7 @@ def make_config(model: str, imgsz: int, conf: float):
     c.detector.iou_threshold = 0.6
     c.detector.max_frame_area_ratio = 0.75
     c.tracking.backend = "bytetrack"
-    c.tracking.yolo_tracker = "configs/bytetrack_cats_fast20.yaml"
+    c.tracking.yolo_tracker = tracker
     c.tracking.acquire_confidence_threshold = conf
     c.tracking.keep_confidence_threshold = max(0.03, conf * 0.7)
     c.output.show_window = False
@@ -78,7 +79,7 @@ def source_fps(video: Path) -> float:
 
 
 def render_one(args, video: Path, fps: float, conf: float, out: Path, logger) -> int:
-    config = make_config(args.model, args.imgsz, conf)
+    config = make_config(args.model, args.imgsz, conf, args.tracker)
     detector = YOLODetector(config.detector, logger)
     overlay = OverlayRenderer(config.overlay)
     zones = SceneZoneClassifier(config.scene_zones)
