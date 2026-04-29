@@ -61,6 +61,15 @@ case "$MODE" in
   iphone-fast20-openvino|iphone-fast20-ov)
     CONFIG="configs/iphone_fast20_openvino_bytetrack.yaml"
     ;;
+  iphone-nano-fast|iphone-yolo26n-fast)
+    CONFIG="configs/iphone_yolo26n_fast_openvino.yaml"
+    ;;
+  iphone-nano-quality|iphone-yolo26n-quality)
+    CONFIG="configs/iphone_yolo26n_quality.yaml"
+    ;;
+  iphone-nano-maxfps|iphone-yolo26n-maxfps)
+    CONFIG="configs/iphone_yolo26n_maxfps.yaml"
+    ;;
   ipad-ipcam|ipad|ipadcamera)
     CONFIG="configs/ipad_ipcamera.yaml"
     ;;
@@ -77,7 +86,7 @@ case "$MODE" in
     CONFIG="configs/ipad_pantilt.yaml"
     ;;
   *)
-    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|webcam-manycats|webcam-yolo-track|webcam-botsort-track|esp32|iphone|iphone-yolo-track|iphone-botsort-track|iphone-motion-bytetrack|iphone-motion-botsort|iphone-openvino-bytetrack|iphone-openvino-botsort|iphone-openvino-balanced-bytetrack|iphone-openvino-balanced-botsort|iphone-fast20-bytetrack|iphone-fast20-botsort|iphone-fast20-openvino|ipad|ipad-manycats|ipad-yolo-track|ipad-botsort-track|pantilt] [extra app args...]" >&2
+    echo "Usage: ./run_camera.sh [webcam-safe|webcam-visual|webcam-manycats|webcam-yolo-track|webcam-botsort-track|esp32|iphone|iphone-yolo-track|iphone-botsort-track|iphone-motion-bytetrack|iphone-motion-botsort|iphone-openvino-bytetrack|iphone-openvino-botsort|iphone-openvino-balanced-bytetrack|iphone-openvino-balanced-botsort|iphone-fast20-bytetrack|iphone-fast20-botsort|iphone-fast20-openvino|iphone-nano-fast|iphone-nano-quality|iphone-nano-maxfps|ipad|ipad-manycats|ipad-yolo-track|ipad-botsort-track|pantilt] [extra app args...]" >&2
     exit 2
     ;;
 esac
