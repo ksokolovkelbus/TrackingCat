@@ -71,6 +71,7 @@ class YOLODetector:
                     conf=self._config.confidence_threshold,
                     iou=self._config.iou_threshold,
                     device=self._device,
+                    classes=list(self._target_class_ids) if self._target_class_ids else None,
                     verbose=False,
                     persist=True,
                     tracker=tracker,
@@ -82,6 +83,7 @@ class YOLODetector:
                     conf=self._config.confidence_threshold,
                     iou=self._config.iou_threshold,
                     device=self._device,
+                    classes=list(self._target_class_ids) if self._target_class_ids else None,
                     verbose=False,
                 )
         except Exception:

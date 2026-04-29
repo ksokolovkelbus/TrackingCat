@@ -1,10 +1,7 @@
-# ByteTrack tuning for TrackingCat many-cats realtime mode.
-# Keeps weak cat detections attached to existing tracks while requiring stronger
-# evidence to start a brand-new cat track.
 tracker_type: bytetrack
-track_high_thresh: 0.25
-track_low_thresh: 0.05
-new_track_thresh: 0.25
-track_buffer: 90
+track_high_thresh: 0.1
+track_low_thresh: 0.03
+new_track_thresh: 0.12
+track_buffer: 120
 match_thresh: 0.85
 fuse_score: true

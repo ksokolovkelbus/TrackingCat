@@ -46,4 +46,8 @@ htmlcov/
 .env
 .env.*
 *_openvino_model/
-
+recordings/
+artifacts/
+whishper_test.py
+tools/*.bak
+tools/*.bak_profile
