@@ -4,7 +4,6 @@ import argparse
 import logging
 import sys
 import time
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -32,7 +31,7 @@ class _SilentAudioAlertPlayer(AudioAlertPlayer):
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Render 6-panel YOLO26s/YOLO26n resolution comparison grid.")
+    p = argparse.ArgumentParser(description="Offline separate-pass 6-panel YOLO26s/YOLO26n resolution comparison grid.")
     p.add_argument("video")
     p.add_argument("--conf", type=float, default=0.05)
     p.add_argument("--resolutions", nargs="+", type=int, default=[640, 384, 256])
@@ -67,50 +66,44 @@ def _make_config(model_path: str, imgsz: int, conf: float):
     return config
 
 
-def _build_pipeline(model_path: str, imgsz: int, conf: float, logger):
-    config = _make_config(model_path, imgsz, conf)
-    detector = YOLODetector(config.detector, logger)
-    overlay = OverlayRenderer(config.overlay)
-    zones = SceneZoneClassifier(config.scene_zones)
-    surface = SurfaceMonitor(zones, config.surface_alert, logger, _SilentAudioAlertPlayer(config.surface_alert, logger))
-    title = f"{Path(model_path).stem} | imgsz={imgsz} | conf={conf:.2f}"
-    return {"config": config, "detector": detector, "overlay": overlay, "zones": zones, "surface": surface, "title": title}
+def _source_info(video: Path) -> tuple[float, int, int]:
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video}")
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 30.0
+    width = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
+    height = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    cap.release()
+    return fps, width, height
 
 
 def _resize_panel(frame: np.ndarray, width: int, height: int) -> np.ndarray:
     return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
 
 
-def _compose_grid(panels: list[np.ndarray], width: int, height: int) -> np.ndarray:
-    resized = [_resize_panel(panel, width, height) for panel in panels]
-    sep_v = np.full((height, 4, 3), (40, 40, 40), dtype=np.uint8)
-    row1 = np.hstack([resized[0], sep_v, resized[1], sep_v, resized[2]])
-    row2 = np.hstack([resized[3], sep_v, resized[4], sep_v, resized[5]])
-    sep_h = np.full((4, row1.shape[1], 3), (40, 40, 40), dtype=np.uint8)
-    return np.vstack([row1, sep_h, row2])
-
-
-def main() -> int:
-    args = _parse_args()
-    logging.getLogger("ultralytics").setLevel(logging.WARNING)
-    logger = setup_logging("INFO")
-    video = Path(args.video).expanduser()
+def _render_one(
+    *,
+    video: Path,
+    model_path: str,
+    imgsz: int,
+    conf: float,
+    title: str,
+    output_path: Path,
+    fps: float,
+    args: argparse.Namespace,
+    logger,
+) -> int:
+    config = _make_config(model_path, imgsz, conf)
+    detector = YOLODetector(config.detector, logger)
+    overlay = OverlayRenderer(config.overlay)
+    zones = SceneZoneClassifier(config.scene_zones)
+    surface = SurfaceMonitor(zones, config.surface_alert, logger, _SilentAudioAlertPlayer(config.surface_alert, logger))
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
-        print(f"Cannot open video: {video}")
-        return 2
-    source_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) or 30.0
-    output = Path(args.output) if args.output else Path("recordings/iphone") / f"grid_s_n_resolutions_{datetime.now().strftime("%Y%m%d_%H%M%S")}.mp4"
-
-    specs = []
-    for model_path in ["yolo26s.pt", "yolo26n.pt"]:
-        for imgsz in args.resolutions:
-            specs.append((model_path, imgsz))
-    pipelines = [_build_pipeline(model, imgsz, args.conf, logger) for model, imgsz in specs]
-
+        raise RuntimeError(f"Cannot open video: {video}")
     writer = None
-    processed = 0
     source_frame = 0
+    processed = 0
     started = time.perf_counter()
     try:
         while True:
@@ -120,50 +113,96 @@ def main() -> int:
             source_frame += 1
             if (source_frame - 1) % args.stride != 0:
                 continue
-            if args.seconds > 0 and (source_frame / source_fps) > args.seconds:
+            if args.seconds > 0 and (source_frame / fps) > args.seconds:
                 break
             processed += 1
             if args.max_frames > 0 and processed > args.max_frames:
                 break
-            live_fps = processed / max(0.001, time.perf_counter() - started)
-            panels = []
-            for pipe in pipelines:
-                panel, _, _ = _draw_panel(
-                    frame,
-                    pipe["title"],
-                    pipe["detector"],
-                    pipe["config"],
-                    pipe["overlay"],
-                    pipe["zones"],
-                    pipe["surface"],
-                    source_frame,
-                    processed,
-                    live_fps,
-                )
-                panels.append(panel)
-            grid = _compose_grid(panels, args.panel_width, args.panel_height)
+            render_fps = processed / max(0.001, time.perf_counter() - started)
+            panel, _, _ = _draw_panel(frame, title, detector, config, overlay, zones, surface, source_frame, processed, render_fps)
+            panel = _resize_panel(panel, args.panel_width, args.panel_height)
             if writer is None:
-                output.parent.mkdir(parents=True, exist_ok=True)
-                writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), source_fps / args.stride, (grid.shape[1], grid.shape[0]))
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps / args.stride, (panel.shape[1], panel.shape[0]))
                 if not writer.isOpened():
-                    raise RuntimeError(f"Cannot open writer: {output}")
-                print(f"Saving: {output}")
-            writer.write(grid)
-            if args.show:
-                cv2.imshow("YOLO26s vs YOLO26n resolution grid", grid)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-            if processed % 10 == 0:
-                print(f"processed={processed} source_frame={source_frame} render_speed={live_fps:.2f} fps", flush=True)
+                    raise RuntimeError(f"Cannot open writer: {output_path}")
+            writer.write(panel)
+            if processed % 50 == 0:
+                print(f"{title}: rendered={processed} source_frame={source_frame} speed={render_fps:.2f} fps", flush=True)
     finally:
         cap.release()
         if writer is not None:
             writer.release()
-        for pipe in pipelines:
-            pipe["surface"].close()
-        if args.show:
+        surface.close()
+    print(f"{title}: done rendered={processed} -> {output_path}")
+    return processed
+
+
+def _stitch(parts: list[Path], output: Path, fps: float, stride: int, show: bool) -> int:
+    caps = [cv2.VideoCapture(str(p)) for p in parts]
+    if not all(c.isOpened() for c in caps):
+        raise RuntimeError("Cannot open all intermediate videos")
+    writer = None
+    frames = 0
+    try:
+        while True:
+            read = [c.read() for c in caps]
+            if not all(ok and frame is not None for ok, frame in read):
+                break
+            panels = [frame for _ok, frame in read]
+            h, w = panels[0].shape[:2]
+            sep_v = np.full((h, 4, 3), (40, 40, 40), dtype=np.uint8)
+            row_s = np.hstack([panels[0], sep_v, panels[1], sep_v, panels[2]])
+            row_n = np.hstack([panels[3], sep_v, panels[4], sep_v, panels[5]])
+            sep_h = np.full((4, row_s.shape[1], 3), (40, 40, 40), dtype=np.uint8)
+            grid = np.vstack([row_s, sep_h, row_n])
+            if writer is None:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps / stride, (grid.shape[1], grid.shape[0]))
+                if not writer.isOpened():
+                    raise RuntimeError(f"Cannot open output writer: {output}")
+                print(f"Saving stitched grid: {output}")
+            writer.write(grid)
+            frames += 1
+            if show:
+                cv2.imshow("YOLO26s vs YOLO26n resolution grid", grid)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+    finally:
+        for c in caps:
+            c.release()
+        if writer is not None:
+            writer.release()
+        if show:
             cv2.destroyAllWindows()
-    print(f"Done: {processed} frames")
+    return frames
+
+
+def main() -> int:
+    args = _parse_args()
+    if args.stride < 1:
+        print("--stride must be >= 1")
+        return 2
+    logging.getLogger("ultralytics").setLevel(logging.WARNING)
+    logger = setup_logging("INFO")
+    video = Path(args.video).expanduser()
+    fps, _, _ = _source_info(video)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output = Path(args.output) if args.output else Path("recordings/iphone") / f"grid_s_n_resolutions_{stamp}.mp4"
+    tmp_dir = output.parent / f".{output.stem}_parts"
+    specs = []
+    for row_name, model_path in [("S", "yolo26s.pt"), ("N", "yolo26n.pt")]:
+        for imgsz in args.resolutions:
+            title = f"YOLO26{row_name.lower()} | imgsz={imgsz} | conf={args.conf:.2f}"
+            part = tmp_dir / f"{row_name}_{imgsz}.mp4"
+            specs.append((model_path, imgsz, title, part))
+
+    for index, (model_path, imgsz, title, part) in enumerate(specs, start=1):
+        print(f"Pass {index}/7: render {title}")
+        _render_one(video=video, model_path=model_path, imgsz=imgsz, conf=args.conf, title=title, output_path=part, fps=fps, args=args, logger=logger)
+    print("Pass 7/7: stitch 6 rendered videos")
+    frames = _stitch([part for *_rest, part in specs], output, fps, args.stride, args.show)
+    print(f"Done: {frames} stitched frames")
     print(f"Output: {output}")
     return 0
 
