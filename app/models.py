@@ -292,6 +292,14 @@ class FrameTrackingSummary:
     frame_height: int
     tracking_enabled: bool
     detections_count: int
+    source_frame_index: int | None = None
+    source_timestamp_ms: float | None = None
+    result_age_frames: int = 0
+    result_age_ms: float = 0.0
+    inference_ms: float = 0.0
+    inference_fps: float = 0.0
+    async_worker_busy: bool = False
+    dropped_inference_frames: int = 0
     pipeline_state: TrackingPipelineState = TrackingPipelineState.SEARCH
     yolo_ran_this_frame: bool = False
     tracker_updates_count: int = 0
@@ -373,6 +381,7 @@ class OverlayConfig:
     minimal_overlay: bool = False
     debug_overlay: bool = True
     show_fps: bool = True
+    show_perf_metrics: bool = False
     show_debug_counters: bool = True
     show_track_boxes: bool = False
     show_track_crosshair: bool = True
@@ -485,6 +494,7 @@ class TrackingConfig:
     use_motion_prediction: bool = True
     async_inference_enabled: bool = False
     async_inference_max_staleness_frames: int = 10
+    async_inference_max_staleness_ms: float = 0.0
     display_sort_mode: DisplaySortMode = "top_to_bottom_left_to_right"
     frame_tracker_backend: FrameTrackerBackend = "auto"
 

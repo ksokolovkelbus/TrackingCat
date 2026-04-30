@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
@@ -22,7 +23,7 @@ def setup_logging(level: str) -> logging.Logger:
         logger.handlers.clear()
 
     formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        fmt="%(asctime)s | %(levelname)-7s | pid=%(process)d | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -31,7 +32,13 @@ def setup_logging(level: str) -> logging.Logger:
     logger.addHandler(stream_handler)
 
     LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(LOG_FILE_PATH, mode="w", encoding="utf-8")
+    file_handler = RotatingFileHandler(
+        LOG_FILE_PATH,
+        mode="a",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

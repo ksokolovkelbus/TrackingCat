@@ -3,12 +3,12 @@ source:
   source_path: null
   stream_url: http://192.168.8.181:8081/video
   camera_index: 0
-  camera_width: 1280
-  camera_height: 720
-  process_every_n_frames: 2
-  reconnect_delay_seconds: 0.5
-  max_reconnect_attempts: 20
-  read_fail_threshold: 2
+  camera_width: 800
+  camera_height: 450
+  process_every_n_frames: 1
+  reconnect_delay_seconds: 1.0
+  max_reconnect_attempts: 5
+  read_fail_threshold: 3
   buffer_size: 1
   snapshot_timeout_seconds: 2.0
   snapshot_use_cache_bust: true
@@ -27,6 +27,7 @@ overlay:
   minimal_overlay: true
   debug_overlay: false
   show_fps: true
+  show_perf_metrics: true
   show_debug_counters: false
   show_track_boxes: false
   show_track_crosshair: true

@@ -126,6 +126,8 @@ tracking:
   frame_tracker_backend: KCF
   backend: bytetrack
   yolo_tracker: configs/bytetrack_cats.yaml
+  async_inference_enabled: true
+  async_inference_max_staleness_frames: 8
 scene_zones:
   enabled: true
   draw_zones: true

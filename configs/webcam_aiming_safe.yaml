@@ -15,10 +15,10 @@ source:
   realtime_latest_frame: true
   latest_frame_wait_ms: 1
 detector:
-  model_path: yolo26s.pt
+  model_path: yolo26l_384_openvino_model
   imgsz: 384
-  confidence_threshold: 0.07
-  iou_threshold: 0.6
+  confidence_threshold: 0.08
+  iou_threshold: 0.9
   device: cpu
   class_name: cat
   max_frame_area_ratio: 0.75
@@ -27,6 +27,7 @@ overlay:
   minimal_overlay: true
   debug_overlay: false
   show_fps: true
+  show_perf_metrics: true
   show_debug_counters: false
   show_track_boxes: false
   show_track_crosshair: true
@@ -126,6 +127,8 @@ tracking:
   frame_tracker_backend: KCF
   backend: bytetrack
   yolo_tracker: configs/bytetrack_cats.yaml
+  async_inference_enabled: true
+  async_inference_max_staleness_frames: 8
 scene_zones:
   enabled: true
   draw_zones: true

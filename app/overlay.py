@@ -237,6 +237,11 @@ class OverlayRenderer:
                     f"Tracker updates: {summary.tracker_updates_count}",
                     f"Tracker failures: {summary.tracker_failures_count}",
                     f"Active tracks: {summary.active_tracks_count}",
+                    f"Inference FPS: {safe_float_text(summary.inference_fps, precision=1, default=0.0)}",
+                    f"Inference ms: {safe_float_text(summary.inference_ms, precision=1, default=0.0)}",
+                    f"Result age: {summary.result_age_frames}f / {safe_float_text(summary.result_age_ms, precision=0, default=0)} ms",
+                    f"Dropped async frames: {summary.dropped_inference_frames}",
+                    f"Worker busy: {summary.async_worker_busy}",
                     f"Visible: {summary.visible_count}",
                     f"Confirmed: {summary.confirmed_count}",
                     f"Held: {summary.held_count}",
@@ -246,12 +251,31 @@ class OverlayRenderer:
             )
         return self._draw_text_block(frame, lines, origin=(12, 24))
 
-    def draw_fps(self, frame: np.ndarray, fps: float) -> np.ndarray:
+    def draw_fps(
+        self,
+        frame: np.ndarray,
+        fps: float,
+        capture_fps: float | None = None,
+        summary: FrameTrackingSummary | None = None,
+    ) -> np.ndarray:
         if not self._config.show_fps:
             return frame
+        text = f"FPS: {safe_float_text(fps, precision=1, default=0.0)}"
+        if self._config.show_perf_metrics:
+            parts = [f"UI {safe_float_text(fps, precision=1, default=0.0)}"]
+            if capture_fps is not None:
+                parts.append(f"CAP {safe_float_text(capture_fps, precision=1, default=0.0)}")
+            if summary is not None and summary.inference_fps > 0:
+                parts.append(f"YOLO {safe_float_text(summary.inference_fps, precision=1, default=0.0)}")
+            if summary is not None:
+                parts.append(f"age {summary.result_age_frames}f/{int(round(summary.result_age_ms))}ms")
+                parts.append(f"drop {summary.dropped_inference_frames}")
+                if summary.async_worker_busy:
+                    parts.append("busy")
+            text = " | ".join(parts)
         return self.draw_label(
             frame,
-            text=f"FPS: {safe_float_text(fps, precision=1, default='0.0')}",
+            text=text,
             origin=(12, frame.shape[0] - 16),
             text_color=self._config.accent_color,
         )

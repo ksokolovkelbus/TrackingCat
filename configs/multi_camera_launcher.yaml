@@ -1,0 +1,37 @@
+defaults:
+  device: cpu
+  stagger_seconds: 1.0
+  python_bin: .venv/bin/python
+  app_module: app.main
+  log_dir: logs/multi-camera
+
+modes:
+  webcam-safe:
+    config: configs/webcam_aiming_safe.yaml
+    aliases: [webcam, aiming, aiming-safe]
+  webcam-visual:
+    config: configs/webcam_visual_tracking.yaml
+    aliases: [visual, tracking-visual]
+  esp32:
+    config: configs/esp32_wifi.yaml
+    aliases: [wifi, esp32_wifi]
+  iphone:
+    config: configs/iphone_ipcamera.yaml
+    aliases: [iphone-ipcam, ipcam]
+  ipad:
+    config: configs/ipad_ipcamera.yaml
+    aliases: [ipad-ipcam, ipadcamera]
+  pantilt:
+    config: configs/ipad_pantilt.yaml
+    aliases: [ipad-pantilt, pantilt, ipad-pan-tilt]
+
+presets:
+  web-ipad:
+    - webcam-visual
+    - ipad
+  websafe-ipad:
+    - webcam-safe
+    - ipad
+  iphone-ipad:
+    - iphone
+    - ipad

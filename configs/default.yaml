@@ -12,6 +12,8 @@ source:
   buffer_size: 1
   snapshot_timeout_seconds: 2.0
   snapshot_use_cache_bust: true
+  realtime_latest_frame: true
+  latest_frame_wait_ms: 1
 
 detector:
   model_path: yolo26s.pt
@@ -126,6 +128,8 @@ tracking:
   max_active_tracks: 32
   use_motion_prediction: true
   display_sort_mode: top_to_bottom_left_to_right
+  async_inference_enabled: true
+  async_inference_max_staleness_frames: 8
 
 scene_zones:
   enabled: true

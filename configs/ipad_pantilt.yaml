@@ -12,6 +12,8 @@ source:
   buffer_size: 1
   snapshot_timeout_seconds: 2.0
   snapshot_use_cache_bust: true
+  realtime_latest_frame: true
+  latest_frame_wait_ms: 1
 
 detector:
   model_path: yolo26s.pt

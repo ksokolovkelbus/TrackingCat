@@ -153,6 +153,7 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
         minimal_overlay=bool(overlay_data.get("minimal_overlay", defaults.overlay.minimal_overlay)),
         debug_overlay=bool(overlay_data.get("debug_overlay", defaults.overlay.debug_overlay)),
         show_fps=bool(overlay_data.get("show_fps", defaults.overlay.show_fps)),
+        show_perf_metrics=bool(overlay_data.get("show_perf_metrics", defaults.overlay.show_perf_metrics)),
         show_debug_counters=bool(
             overlay_data.get("show_debug_counters", defaults.overlay.show_debug_counters),
         ),
@@ -471,6 +472,12 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
                 tracking_data.get(
                     "async_inference_max_staleness_frames",
                     defaults.tracking.async_inference_max_staleness_frames,
+                ),
+            ),
+            async_inference_max_staleness_ms=float(
+                tracking_data.get(
+                    "async_inference_max_staleness_ms",
+                    defaults.tracking.async_inference_max_staleness_ms,
                 ),
             ),
             display_sort_mode=str(
@@ -851,6 +858,8 @@ def _validate_config(config: AppConfig) -> None:
         raise ConfigError("tracking.detector_interval_while_tracking must be >= 1.")
     if config.tracking.async_inference_max_staleness_frames <= 0:
         raise ConfigError("tracking.async_inference_max_staleness_frames must be >= 1.")
+    if config.tracking.async_inference_max_staleness_ms < 0:
+        raise ConfigError("tracking.async_inference_max_staleness_ms must be >= 0.")
     if config.tracking.reacquire_after_failed_tracker_frames <= 0:
         raise ConfigError("tracking.reacquire_after_failed_tracker_frames must be >= 1.")
     if config.tracking.max_tracker_only_frames_without_detection <= 0:

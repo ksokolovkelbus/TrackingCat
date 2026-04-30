@@ -21,7 +21,7 @@ if [[ -z "$VIDEO" || "$VIDEO" == "--help" || "$VIDEO" == "-h" ]]; then
 fi
 shift || true
 
-REALTIME_ARGS=(--playback-realtime true --playback-fps 30)
+REALTIME_ARGS=(--playback-realtime true --playback-fps 24)
 if [[ "$MODE" == "fast" ]]; then
   REALTIME_ARGS=(--playback-realtime false)
 fi

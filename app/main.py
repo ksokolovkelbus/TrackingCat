@@ -42,26 +42,38 @@ class AsyncYoloNativeTracker:
         self._stop_event = Event()
         self._pending_frame: np.ndarray | None = None
         self._pending_frame_index = 0
+        self._pending_timestamp_ms = 0.0
         self._busy = False
+        self._dropped_frames = 0
         self._latest_summary: FrameTrackingSummary | None = None
         self._latest_summary_frame_index = 0
+        self._inference_fps_meter = FPSMeter(smoothing=0.8)
         self._thread = Thread(target=self._run, name="yolo-native-tracker", daemon=True)
         self._thread.start()
 
-    def submit_if_due(self, frame: np.ndarray, frame_index: int, process_every_n_frames: int) -> bool:
+    def submit_if_due(
+        self,
+        frame: np.ndarray,
+        frame_index: int,
+        frame_timestamp_ms: float,
+        process_every_n_frames: int,
+    ) -> bool:
         if frame_index % max(1, process_every_n_frames) != 0:
             return False
         with self._lock:
             if self._busy or self._pending_frame is not None:
+                self._dropped_frames += 1
                 return False
             self._pending_frame = frame.copy()
             self._pending_frame_index = frame_index
+            self._pending_timestamp_ms = frame_timestamp_ms
             self._wake_event.set()
             return True
 
     def latest_summary(
         self,
         frame_index: int,
+        frame_timestamp_ms: float,
         frame_shape: tuple[int, int] | tuple[int, int, int],
         fallback: FrameTrackingSummary | None,
     ) -> FrameTrackingSummary:
@@ -69,19 +81,37 @@ class AsyncYoloNativeTracker:
             latest = self._latest_summary
             latest_frame_index = self._latest_summary_frame_index
             busy = self._busy or self._pending_frame is not None
+            dropped_frames = self._dropped_frames
         if latest is not None:
-            age = max(0, frame_index - latest_frame_index)
-            if age <= self._config.tracking.async_inference_max_staleness_frames:
+            source_frame_index = latest.source_frame_index or latest_frame_index
+            source_timestamp_ms = latest.source_timestamp_ms or frame_timestamp_ms
+            age_frames = max(0, frame_index - source_frame_index)
+            age_ms = max(0.0, frame_timestamp_ms - source_timestamp_ms)
+            max_staleness_ms = self._config.tracking.async_inference_max_staleness_ms
+            is_fresh = age_frames <= self._config.tracking.async_inference_max_staleness_frames
+            if max_staleness_ms > 0:
+                is_fresh = is_fresh and age_ms <= max_staleness_ms
+            if is_fresh:
                 return replace(
                     latest,
                     frame_index=frame_index,
+                    result_age_frames=age_frames,
+                    result_age_ms=age_ms,
+                    async_worker_busy=busy,
+                    dropped_inference_frames=dropped_frames,
                     yolo_ran_this_frame=False,
                     pipeline_state=TrackingPipelineState.TRACK_ONLY if busy else latest.pipeline_state,
                 )
         if fallback is not None:
+            source_frame_index = fallback.source_frame_index or fallback.frame_index
+            source_timestamp_ms = fallback.source_timestamp_ms or frame_timestamp_ms
             return replace(
                 fallback,
                 frame_index=frame_index,
+                result_age_frames=max(0, frame_index - source_frame_index),
+                result_age_ms=max(0.0, frame_timestamp_ms - source_timestamp_ms),
+                async_worker_busy=busy,
+                dropped_inference_frames=dropped_frames,
                 yolo_ran_this_frame=False,
                 pipeline_state=TrackingPipelineState.TRACK_ONLY,
             )
@@ -101,16 +131,32 @@ class AsyncYoloNativeTracker:
             with self._lock:
                 frame = self._pending_frame
                 frame_index = self._pending_frame_index
+                frame_timestamp_ms = self._pending_timestamp_ms
                 self._pending_frame = None
+                self._pending_timestamp_ms = 0.0
                 self._busy = frame is not None
             if frame is None:
                 continue
             try:
+                inference_started = time.perf_counter()
                 summary = _process_yolo_native_tracking_frame(
                     detector=self._detector,
                     frame=frame,
                     frame_index=frame_index,
+                    frame_timestamp_ms=frame_timestamp_ms,
                     config=self._config,
+                )
+                inference_ms = (time.perf_counter() - inference_started) * 1000.0
+                summary.inference_ms = inference_ms
+                summary.inference_fps = self._inference_fps_meter.update()
+                self._logger.info(
+                    "async_result frame=%d detections=%d visible=%d inference_ms=%.1f inference_fps=%.1f dropped=%d",
+                    frame_index,
+                    summary.raw_detections_count,
+                    summary.visible_count,
+                    summary.inference_ms,
+                    summary.inference_fps,
+                    self._dropped_frames,
                 )
                 with self._lock:
                     self._latest_summary = summary
@@ -423,6 +469,7 @@ def main() -> int:
         else None
     )
     fps_meter = FPSMeter()
+    capture_fps_meter = FPSMeter()
     video_writer: cv2.VideoWriter | None = None
     shutdown_event = Event()
     window_enabled = _initialize_window(config, logger)
@@ -465,6 +512,8 @@ def main() -> int:
                 continue
 
             frame_index += 1
+            frame_timestamp_ms = time.perf_counter() * 1000.0
+            capture_fps = capture_fps_meter.update()
             resize_started = time.perf_counter()
             frame = _maybe_resize_frame(frame, config)
             resize_ms = (time.perf_counter() - resize_started) * 1000.0
@@ -482,10 +531,12 @@ def main() -> int:
                     async_yolo_tracker.submit_if_due(
                         frame=frame,
                         frame_index=frame_index,
+                        frame_timestamp_ms=frame_timestamp_ms,
                         process_every_n_frames=config.source.process_every_n_frames,
                     )
                     summary = async_yolo_tracker.latest_summary(
                         frame_index=frame_index,
+                        frame_timestamp_ms=frame_timestamp_ms,
                         frame_shape=frame.shape,
                         fallback=last_summary,
                     )
@@ -494,6 +545,7 @@ def main() -> int:
                         detector=detector,
                         frame=frame,
                         frame_index=frame_index,
+                        frame_timestamp_ms=frame_timestamp_ms,
                         config=config,
                     )
                 else:
@@ -508,6 +560,7 @@ def main() -> int:
                     detector=detector,
                     frame=frame,
                     frame_index=frame_index,
+                    frame_timestamp_ms=frame_timestamp_ms,
                     timestamp=timestamp,
                     detection_cycle_due=detection_cycle_due,
                     config=config,
@@ -614,7 +667,7 @@ def main() -> int:
                 mode_text=_build_mode_text(config, summary),
             )
             overlay.draw_cat_count(frame, summary.visible_count if summary.tracking_enabled else summary.detection_overlay_count)
-            overlay.draw_fps(frame, fps)
+            overlay.draw_fps(frame, fps, capture_fps=capture_fps, summary=summary)
             overlay_ms = (time.perf_counter() - overlay_started) * 1000.0
 
             alert_recording_started = time.perf_counter()
@@ -903,6 +956,7 @@ def _process_yolo_native_tracking_frame(
     detector: YOLODetector,
     frame: np.ndarray,
     frame_index: int,
+    frame_timestamp_ms: float,
     config: AppConfig,
 ) -> FrameTrackingSummary:
     detections = detector.track(frame, tracker=config.tracking.yolo_tracker)
@@ -913,6 +967,8 @@ def _process_yolo_native_tracking_frame(
         frame_height=frame.shape[0],
         tracking_enabled=True,
         detections_count=len(detections),
+        source_frame_index=frame_index,
+        source_timestamp_ms=frame_timestamp_ms,
         pipeline_state=TrackingPipelineState.TRACK_ONLY,
         yolo_ran_this_frame=True,
         raw_detections_count=len(detections),
@@ -980,6 +1036,7 @@ def _process_detection_only_frame(
     detector: YOLODetector,
     frame: np.ndarray,
     frame_index: int,
+    frame_timestamp_ms: float,
     timestamp: float,
     detection_cycle_due: bool,
     config: AppConfig,
@@ -990,6 +1047,8 @@ def _process_detection_only_frame(
         return replace(
             last_summary,
             frame_index=frame_index,
+            result_age_frames=max(0, frame_index - (last_summary.source_frame_index or last_summary.frame_index)),
+            result_age_ms=max(0.0, frame_timestamp_ms - (last_summary.source_timestamp_ms or frame_timestamp_ms)),
             yolo_ran_this_frame=False,
             pipeline_state=TrackingPipelineState.SEARCH,
         )
@@ -1000,6 +1059,7 @@ def _process_detection_only_frame(
         frame_shape=frame.shape,
         frame_index=frame_index,
         timestamp=timestamp,
+        frame_timestamp_ms=frame_timestamp_ms,
         config=config,
         selector=selector,
         tracker=None,
@@ -1014,6 +1074,7 @@ def process_detections(
     frame_shape: tuple[int, int] | tuple[int, int, int],
     frame_index: int,
     timestamp: float,
+    frame_timestamp_ms: float,
     config: AppConfig,
     selector: TargetSelector,
     tracker: MultiCatTracker | None,
@@ -1039,6 +1100,8 @@ def process_detections(
             frame_height=frame_shape[0],
             tracking_enabled=False,
             detections_count=len(detection_overlays),
+            source_frame_index=frame_index,
+            source_timestamp_ms=frame_timestamp_ms,
             raw_detections_count=raw_detections_count,
             cat_detections_count=cat_detections_count,
             acquire_candidate_count=acquire_candidate_count,
@@ -1093,6 +1156,7 @@ def _log_frame_debug(
         "frame_debug frame_index=%d processed=%s pipeline=%s yolo_ran=%s "
         "raw_detections=%d cat_detections=%d after_acquire=%d after_keep=%d "
         "tracker_updates=%d tracker_failures=%d active_tracks=%d confirmed=%d held=%d lost=%d tracking_enabled=%s "
+        "inference_ms=%.1f inference_fps=%.1f age_frames=%d age_ms=%.1f dropped=%d worker_busy=%s "
         "timings_ms=source:%.1f resize:%.1f detect_track:%.1f surface:%.1f overlay:%.1f record:%.1f output:%.1f window:%.1f total:%.1f",
         frame_index,
         processed_this_frame,
@@ -1109,6 +1173,12 @@ def _log_frame_debug(
         summary.held_count,
         summary.lost_count,
         summary.tracking_enabled,
+        summary.inference_ms,
+        summary.inference_fps,
+        summary.result_age_frames,
+        summary.result_age_ms,
+        summary.dropped_inference_frames,
+        summary.async_worker_busy,
         summary.stage_timings.source_read_ms,
         summary.stage_timings.resize_ms,
         summary.stage_timings.detect_or_track_ms,
