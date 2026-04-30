@@ -5,7 +5,7 @@ source:
   camera_index: 0
   camera_width: 800
   camera_height: 450
-  process_every_n_frames: 2
+  process_every_n_frames: 1
   reconnect_delay_seconds: 1.0
   max_reconnect_attempts: 5
   read_fail_threshold: 3
@@ -33,12 +33,12 @@ overlay:
   show_track_crosshair: true
   show_normalized_coords: false
   box_color:
+  - 255
   - 0
-  - 200
   - 255
   predicted_box_color:
-  - 0
-  - 140
+  - 255
+  - 80
   - 255
   secondary_box_color:
   - 150
@@ -68,7 +68,7 @@ overlay:
   - 16
   - 16
   - 16
-  box_thickness: 2
+  box_thickness: 4
   secondary_box_thickness: 1
   marker_thickness: 2
   marker_size: 18
@@ -128,8 +128,8 @@ tracking:
   backend: bytetrack
   yolo_tracker: configs/bytetrack_cats.yaml
   async_inference_enabled: true
-  async_inference_max_staleness_frames: 6
-  async_inference_max_staleness_ms: 120.0
+  async_inference_max_staleness_frames: 8
+  async_inference_max_staleness_ms: 0.0
 scene_zones:
   enabled: true
   draw_zones: true
