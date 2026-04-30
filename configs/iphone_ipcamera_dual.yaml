@@ -29,7 +29,7 @@ overlay:
   show_fps: true
   show_perf_metrics: true
   show_debug_counters: false
-  show_track_boxes: false
+  show_track_boxes: true
   show_track_crosshair: true
   show_normalized_coords: false
   box_color:
