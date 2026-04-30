@@ -4,34 +4,77 @@ defaults:
   python_bin: .venv/bin/python
   app_module: app.main
   log_dir: logs/multi-camera
-
 modes:
   webcam-safe:
     config: configs/webcam_aiming_safe.yaml
-    aliases: [webcam, aiming, aiming-safe]
+    aliases:
+    - webcam
+    - aiming
+    - aiming-safe
+    cpu_affinity: 0-2
+  webcam-safe-dual:
+    config: configs/webcam_aiming_safe_dual.yaml
+    aliases:
+    - webcam-dual-safe
+    - aiming-dual-safe
+    cpu_affinity: 0-2
   webcam-visual:
     config: configs/webcam_visual_tracking.yaml
-    aliases: [visual, tracking-visual]
+    aliases:
+    - visual
+    - tracking-visual
+    cpu_affinity: 0-2
+  webcam-visual-dual:
+    config: configs/webcam_visual_tracking_dual.yaml
+    aliases:
+    - visual-dual
+    - tracking-visual-dual
+    - web-dual
+    cpu_affinity: 0-2
   esp32:
     config: configs/esp32_wifi.yaml
-    aliases: [wifi, esp32_wifi]
+    aliases:
+    - wifi
+    - esp32_wifi
+    cpu_affinity: 0-2
   iphone:
     config: configs/iphone_ipcamera.yaml
-    aliases: [iphone-ipcam, ipcam]
+    aliases:
+    - iphone-ipcam
+    - ipcam
+    cpu_affinity: 3-5
+  iphone-dual:
+    config: configs/iphone_ipcamera_dual.yaml
+    aliases:
+    - iphone-ipcam-dual
+    - ipcam-dual
+    cpu_affinity: 3-5
   ipad:
     config: configs/ipad_ipcamera.yaml
-    aliases: [ipad-ipcam, ipadcamera]
+    aliases:
+    - ipad-ipcam
+    - ipadcamera
+    cpu_affinity: 3-5
+  ipad-dual:
+    config: configs/ipad_ipcamera_dual.yaml
+    aliases:
+    - ipad-ipcam-dual
+    - ipadcamera-dual
+    cpu_affinity: 3-5
   pantilt:
     config: configs/ipad_pantilt.yaml
-    aliases: [ipad-pantilt, pantilt, ipad-pan-tilt]
-
+    aliases:
+    - ipad-pantilt
+    - pantilt
+    - ipad-pan-tilt
+    cpu_affinity: 3-5
 presets:
   web-ipad:
-    - webcam-visual
-    - ipad
+  - webcam-visual-dual
+  - ipad-dual
   websafe-ipad:
-    - webcam-safe
-    - ipad
+  - webcam-safe-dual
+  - ipad-dual
   iphone-ipad:
-    - iphone
-    - ipad
+  - iphone-dual
+  - ipad-dual

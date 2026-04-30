@@ -19,6 +19,7 @@ Examples:
 
 Notes:
   - available modes/presets come from configs/multi_camera_launcher.yaml
+  - presets are tuned for two simultaneous windows and keep the original single-camera profiles untouched
   - extra args after the mode/preset are passed to every launched app process
   - Ctrl+C stops all child camera processes started by this launcher
 EOF2
@@ -101,6 +102,7 @@ for raw_name in selected:
     resolved.append({
         "name": canonical,
         "config": config_path,
+        "cpu_affinity": str(payload.get("cpu_affinity", "")),
     })
 
 print(json.dumps({
@@ -130,7 +132,8 @@ payload = json.loads(sys.argv[1])
 print("Modes:")
 for name, mode in payload["modes"].items():
     aliases = ", ".join(mode.get("aliases", [])) or "-"
-    print(f"  - {name}: {mode.get('config')} (aliases: {aliases})")
+    affinity = mode.get("cpu_affinity") or "-"
+    print(f"  - {name}: {mode.get('config')} (aliases: {aliases}; cpu: {affinity})")
 print("\nPresets:")
 for name, members in payload["presets"].items():
     print(f"  - {name}: {' + '.join(members)}")
@@ -159,6 +162,7 @@ defaults = payload["defaults"]
 for item in payload["resolved"]:
     print(f"NAME={item['name']}")
     print(f"CONFIG={item['config']}")
+    print(f"CPU_AFFINITY={item.get('cpu_affinity', '')}")
 print("--EXTRA--")
 for arg in payload["extra_args"]:
     print(arg)
@@ -170,6 +174,7 @@ PY
 
 NAMES=()
 CONFIGS=()
+CPU_AFFINITIES=()
 EXTRA_ARGS=()
 DEVICE="cpu"
 STAGGER_SECONDS="1.0"
@@ -193,6 +198,8 @@ for line in "${RESOLVED_LINES[@]}"; do
         NAMES+=("${line#NAME=}")
       elif [[ "$line" == CONFIG=* ]]; then
         CONFIGS+=("${line#CONFIG=}")
+      elif [[ "$line" == CPU_AFFINITY=* ]]; then
+        CPU_AFFINITIES+=("${line#CPU_AFFINITY=}")
       fi
       ;;
     extra)
@@ -231,23 +238,38 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+HAS_TASKSET=0
+if command -v taskset >/dev/null 2>&1; then
+  HAS_TASKSET=1
+fi
+
 for i in "${!NAMES[@]}"; do
   name="${NAMES[$i]}"
   config="${CONFIGS[$i]}"
   logfile="$LOG_DIR/${TIMESTAMP}_${name}.log"
+  affinity="${CPU_AFFINITIES[$i]:-}"
   cmd=("$PYTHON_BIN" -m "$APP_MODULE" --config "$config" --device "$DEVICE")
   if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     cmd+=("${EXTRA_ARGS[@]}")
   fi
+  launch_cmd=()
+  if [[ -n "$affinity" && "$HAS_TASKSET" -eq 1 ]]; then
+    launch_cmd=(taskset -c "$affinity")
+  fi
+  launch_cmd+=(stdbuf -oL -eL)
+  launch_cmd+=("${cmd[@]}")
 
   echo "Launching [$name]"
   echo "  config: $config"
   echo "  log:    $logfile"
+  if [[ -n "$affinity" && "$HAS_TASKSET" -eq 1 ]]; then
+    echo "  cpu:    $affinity"
+  fi
   printf '  cmd:    '
-  printf '%q ' "${cmd[@]}"
+  printf '%q ' "${launch_cmd[@]}"
   echo
 
-  stdbuf -oL -eL "${cmd[@]}" >>"$logfile" 2>&1 &
+  "${launch_cmd[@]}" >>"$logfile" 2>&1 &
   pid=$!
   PIDS+=("$pid")
   echo "  pid:    $pid"
