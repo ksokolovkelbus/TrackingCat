@@ -6,7 +6,7 @@ import signal
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock, Thread
 
 import cv2
 import numpy as np
@@ -28,6 +28,98 @@ from app.utils import FPSMeter, bbox_to_square, build_detection_overlays, normal
 from app.video_source import LatestFrameVideoSource, VideoSource, VideoSourceError
 from app.zone_editor import ZoneEditor
 from app.zones import SceneZoneClassifier
+
+
+class AsyncYoloNativeTracker:
+    """Runs YOLO-native tracking on a background thread and exposes the latest finished result."""
+
+    def __init__(self, detector: YOLODetector, config: AppConfig, logger: logging.Logger) -> None:
+        self._detector = detector
+        self._config = config
+        self._logger = logger
+        self._lock = Lock()
+        self._wake_event = Event()
+        self._stop_event = Event()
+        self._pending_frame: np.ndarray | None = None
+        self._pending_frame_index = 0
+        self._busy = False
+        self._latest_summary: FrameTrackingSummary | None = None
+        self._latest_summary_frame_index = 0
+        self._thread = Thread(target=self._run, name="yolo-native-tracker", daemon=True)
+        self._thread.start()
+
+    def submit_if_due(self, frame: np.ndarray, frame_index: int, process_every_n_frames: int) -> bool:
+        if frame_index % max(1, process_every_n_frames) != 0:
+            return False
+        with self._lock:
+            if self._busy or self._pending_frame is not None:
+                return False
+            self._pending_frame = frame.copy()
+            self._pending_frame_index = frame_index
+            self._wake_event.set()
+            return True
+
+    def latest_summary(
+        self,
+        frame_index: int,
+        frame_shape: tuple[int, int] | tuple[int, int, int],
+        fallback: FrameTrackingSummary | None,
+    ) -> FrameTrackingSummary:
+        with self._lock:
+            latest = self._latest_summary
+            latest_frame_index = self._latest_summary_frame_index
+            busy = self._busy or self._pending_frame is not None
+        if latest is not None:
+            age = max(0, frame_index - latest_frame_index)
+            if age <= self._config.tracking.async_inference_max_staleness_frames:
+                return replace(
+                    latest,
+                    frame_index=frame_index,
+                    yolo_ran_this_frame=False,
+                    pipeline_state=TrackingPipelineState.TRACK_ONLY if busy else latest.pipeline_state,
+                )
+        if fallback is not None:
+            return replace(
+                fallback,
+                frame_index=frame_index,
+                yolo_ran_this_frame=False,
+                pipeline_state=TrackingPipelineState.TRACK_ONLY,
+            )
+        return _empty_yolo_native_summary(frame_shape=frame_shape, frame_index=frame_index)
+
+    def close(self) -> None:
+        self._stop_event.set()
+        self._wake_event.set()
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            self._wake_event.wait(timeout=0.1)
+            self._wake_event.clear()
+            if self._stop_event.is_set():
+                break
+            with self._lock:
+                frame = self._pending_frame
+                frame_index = self._pending_frame_index
+                self._pending_frame = None
+                self._busy = frame is not None
+            if frame is None:
+                continue
+            try:
+                summary = _process_yolo_native_tracking_frame(
+                    detector=self._detector,
+                    frame=frame,
+                    frame_index=frame_index,
+                    config=self._config,
+                )
+                with self._lock:
+                    self._latest_summary = summary
+                    self._latest_summary_frame_index = frame_index
+            except Exception:
+                self._logger.exception("Async YOLO-native tracking failed.")
+            finally:
+                with self._lock:
+                    self._busy = False
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -321,6 +413,11 @@ def main() -> int:
         logger=logger,
         overlay_renderer=overlay,
     )
+    async_yolo_tracker = (
+        AsyncYoloNativeTracker(detector=detector, config=config, logger=logger)
+        if use_yolo_native_tracking and config.tracking.async_inference_enabled
+        else None
+    )
     fps_meter = FPSMeter()
     video_writer: cv2.VideoWriter | None = None
     shutdown_event = Event()
@@ -376,12 +473,31 @@ def main() -> int:
 
             detect_or_track_started = time.perf_counter()
             if use_yolo_native_tracking:
-                summary = _process_yolo_native_tracking_frame(
-                    detector=detector,
-                    frame=frame,
-                    frame_index=frame_index,
-                    config=config,
-                )
+                if async_yolo_tracker is not None:
+                    async_yolo_tracker.submit_if_due(
+                        frame=frame,
+                        frame_index=frame_index,
+                        process_every_n_frames=config.source.process_every_n_frames,
+                    )
+                    summary = async_yolo_tracker.latest_summary(
+                        frame_index=frame_index,
+                        frame_shape=frame.shape,
+                        fallback=last_summary,
+                    )
+                elif detection_cycle_due or last_summary is None:
+                    summary = _process_yolo_native_tracking_frame(
+                        detector=detector,
+                        frame=frame,
+                        frame_index=frame_index,
+                        config=config,
+                    )
+                else:
+                    summary = replace(
+                        last_summary,
+                        frame_index=frame_index,
+                        yolo_ran_this_frame=False,
+                        pipeline_state=TrackingPipelineState.TRACK_ONLY,
+                    )
             elif tracker_manager is None:
                 summary = _process_detection_only_frame(
                     detector=detector,
@@ -567,6 +683,8 @@ def main() -> int:
         coordinate_logger.close()
         alert_recorder.close()
         surface_monitor.close()
+        if async_yolo_tracker is not None:
+            async_yolo_tracker.close()
         source.release()
         if video_writer is not None:
             video_writer.release()
@@ -755,6 +873,21 @@ def _run_pan_tilt_manual_mode(config: AppConfig, logger: logging.Logger) -> int:
                 logger.debug("OpenCV window cleanup failed.", exc_info=True)
 
 
+
+def _empty_yolo_native_summary(
+    frame_shape: tuple[int, int] | tuple[int, int, int],
+    frame_index: int,
+) -> FrameTrackingSummary:
+    frame_height, frame_width = frame_shape[:2]
+    return FrameTrackingSummary(
+        frame_index=frame_index,
+        frame_width=frame_width,
+        frame_height=frame_height,
+        tracking_enabled=True,
+        detections_count=0,
+        pipeline_state=TrackingPipelineState.TRACK_ONLY,
+        yolo_ran_this_frame=False,
+    )
 
 def _process_yolo_native_tracking_frame(
     detector: YOLODetector,

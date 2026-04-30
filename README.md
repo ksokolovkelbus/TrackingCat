@@ -2,13 +2,20 @@
 
 Local cat detection/tracking for Ubuntu with YOLO26s + ByteTrack, zone overlays, alerts, recording, and pan/tilt aiming support.
 
-The current project preset is tuned for CPU use:
+The current base project preset is tuned for CPU use:
 
-- model: `YOLO26s`
 - inference size: `imgsz=384`
 - detector confidence: `0.07`
 - tracker: `ByteTrack`
 - tracker config: `configs/bytetrack_cats.yaml`
+
+The iPhone live mode is the high-quality preset:
+
+- model source: `yolo26m.pt`
+- runtime model: `yolo26m_384_openvino_model`
+- `iou_threshold: 0.9`
+- async YOLO inference enabled
+- process every 2nd frame for lower latency
 
 ## Setup
 
@@ -72,6 +79,18 @@ Config: `configs/iphone_ipcamera.yaml`
 
 ```bash
 ./run_camera.sh iphone
+```
+
+This is the high-quality live preset. It uses YOLO26m exported to OpenVINO at `imgsz=384` and async inference for smoother display.
+
+If `yolo26m_384_openvino_model/` is missing, create it locally once:
+
+```bash
+.venv/bin/python - <<PY
+from ultralytics import YOLO
+YOLO('yolo26m.pt').export(format='openvino', imgsz=384, dynamic=False, half=False, int8=False)
+PY
+mv yolo26m_openvino_model yolo26m_384_openvino_model
 ```
 
 Edit the iPhone stream URL in:

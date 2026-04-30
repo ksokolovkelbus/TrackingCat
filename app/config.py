@@ -460,6 +460,15 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             use_motion_prediction=bool(
                 tracking_data.get("use_motion_prediction", defaults.tracking.use_motion_prediction),
             ),
+            async_inference_enabled=bool(
+                tracking_data.get("async_inference_enabled", defaults.tracking.async_inference_enabled),
+            ),
+            async_inference_max_staleness_frames=int(
+                tracking_data.get(
+                    "async_inference_max_staleness_frames",
+                    defaults.tracking.async_inference_max_staleness_frames,
+                ),
+            ),
             display_sort_mode=str(
                 tracking_data.get("display_sort_mode", defaults.tracking.display_sort_mode),
             ),
@@ -834,6 +843,8 @@ def _validate_config(config: AppConfig) -> None:
         raise ConfigError("tracking.backend must be hybrid, yolo_native, bytetrack, or botsort.")
     if config.tracking.detector_interval_while_tracking <= 0:
         raise ConfigError("tracking.detector_interval_while_tracking must be >= 1.")
+    if config.tracking.async_inference_max_staleness_frames <= 0:
+        raise ConfigError("tracking.async_inference_max_staleness_frames must be >= 1.")
     if config.tracking.reacquire_after_failed_tracker_frames <= 0:
         raise ConfigError("tracking.reacquire_after_failed_tracker_frames must be >= 1.")
     if config.tracking.max_tracker_only_frames_without_detection <= 0:

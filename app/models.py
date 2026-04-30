@@ -481,6 +481,8 @@ class TrackingConfig:
     keep_lost_tracks: bool = True
     max_active_tracks: int = 16
     use_motion_prediction: bool = True
+    async_inference_enabled: bool = False
+    async_inference_max_staleness_frames: int = 10
     display_sort_mode: DisplaySortMode = "top_to_bottom_left_to_right"
     frame_tracker_backend: FrameTrackerBackend = "auto"
 
