@@ -127,24 +127,28 @@ This mode is for manual aiming/servo calibration. It keeps the pan/tilt controls
 
 ## Test on a recorded video
 
-Use the single video-test wrapper:
+Use the video-test wrapper. Default mode is realtime playback, capped to 30 FPS so heavy async models have time to return detections:
 
 ```bash
-./run_test_video.sh /path/to/video.mp4
+./run_test_video.sh realtime /path/to/video.mp4
 ```
 
 Example:
 
 ```bash
-./run_test_video.sh recordings/cat_camera_sample_20260429_185638.mp4
+./run_test_video.sh realtime recordings/cat_camera_sample_20260429_185638.mp4
 ```
 
-The video path goes as the **first argument** after `run_test_video.sh`.
-
-You can pass normal app overrides after the path, for example:
+Fast mode intentionally does not throttle playback and is useful only for stress/speed checks:
 
 ```bash
-./run_test_video.sh recordings/cat.mp4 --conf-thres 0.09 --imgsz 384
+./run_test_video.sh fast recordings/cat_camera_sample_20260429_185638.mp4
+```
+
+The video path goes after the optional mode. You can pass normal app overrides after the path, for example:
+
+```bash
+./run_test_video.sh realtime recordings/cat.mp4 --conf-thres 0.09 --imgsz 384
 ```
 
 ## Record camera samples

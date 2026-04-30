@@ -423,6 +423,8 @@ class SourceConfig:
     snapshot_use_cache_bust: bool = True
     realtime_latest_frame: bool = False
     latest_frame_wait_ms: int = 5
+    playback_realtime: bool = False
+    playback_fps: float = 30.0
 
     def resolved_source(self) -> int | str:
         if self.source_type == "webcam":

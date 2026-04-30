@@ -258,6 +258,10 @@ def _build_app_config(data: Mapping[str, Any]) -> AppConfig:
             latest_frame_wait_ms=int(
                 source_data.get("latest_frame_wait_ms", defaults.source.latest_frame_wait_ms),
             ),
+            playback_realtime=bool(
+                source_data.get("playback_realtime", defaults.source.playback_realtime),
+            ),
+            playback_fps=float(source_data.get("playback_fps", defaults.source.playback_fps)),
         ),
         detector=DetectorConfig(
             model_path=str(detector_data.get("model_path", defaults.detector.model_path)),
@@ -839,6 +843,8 @@ def _validate_config(config: AppConfig) -> None:
         raise ConfigError("source.snapshot_timeout_seconds must be > 0.")
     if config.source.latest_frame_wait_ms < 0:
         raise ConfigError("source.latest_frame_wait_ms must be >= 0.")
+    if config.source.playback_fps <= 0:
+        raise ConfigError("source.playback_fps must be > 0.")
     if config.tracking.backend not in {"hybrid", "yolo_native", "bytetrack", "botsort"}:
         raise ConfigError("tracking.backend must be hybrid, yolo_native, bytetrack, or botsort.")
     if config.tracking.detector_interval_while_tracking <= 0:

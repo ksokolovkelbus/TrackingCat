@@ -131,6 +131,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera-width", type=int, help="Requested camera capture width.")
     parser.add_argument("--camera-height", type=int, help="Requested camera capture height.")
     parser.add_argument("--snapshot-timeout", type=float, help="HTTP timeout for snapshot-based sources.")
+    parser.add_argument("--playback-realtime", type=parse_bool, help="Throttle file input to playback FPS.")
+    parser.add_argument("--playback-fps", type=float, help="Playback FPS for file input realtime mode.")
     parser.add_argument(
         "--process-every-n-frames",
         type=int,
@@ -285,6 +287,8 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
         "source.camera_width": args.camera_width,
         "source.camera_height": args.camera_height,
         "source.snapshot_timeout_seconds": args.snapshot_timeout,
+        "source.playback_realtime": args.playback_realtime,
+        "source.playback_fps": args.playback_fps,
         "source.process_every_n_frames": args.process_every_n_frames,
         "detector.model_path": args.model,
         "detector.imgsz": args.imgsz,
@@ -440,6 +444,7 @@ def main() -> int:
         signal.signal(signal.SIGTERM, _handle_shutdown)
 
     frame_index = 0
+    playback_started_at = time.perf_counter()
 
     try:
         source.open()
@@ -672,6 +677,11 @@ def main() -> int:
                 processed_this_frame=summary.yolo_ran_this_frame,
                 enabled=config.logging.per_frame_debug,
             )
+            if config.source.source_type == "file" and config.source.playback_realtime:
+                target_elapsed = frame_index / max(1.0, config.source.playback_fps)
+                sleep_seconds = playback_started_at + target_elapsed - time.perf_counter()
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
         return 0
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
