@@ -1,5 +1,5 @@
 # TrackingCat
-test
+
 TrackingCat is a local cat detection and tracking system with zone-based alerts.
 
 It runs on Ubuntu and supports three camera sources:
